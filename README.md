@@ -7,8 +7,11 @@ bounded transform/opacity motion artifacts from raster-free SVG.
 [The product contract](docs/CONTRACT.md) is the user-facing behavior record; the CLI schema,
 implementation, and tests are the executable source of truth.
 
-Everything runs locally from a checkout — there is no application packaging or hosted
-distribution step. Behavioral verification is provided by `cargo test`; source publication
+Everything runs locally. Build from a checkout with Cargo, or download the Apple Silicon
+macOS CLI archive from [GitHub Releases](https://github.com/AxiomOrient/perfectpixel/releases).
+The project introduction is available at
+[AxiomOrient GitHub Pages](https://axiomorient.github.io/perfectpixel/); it does not process
+or receive user files. Behavioral verification is provided by `cargo test`; source publication
 also requires the formatting, Clippy, and documentation-contract checks listed below.
 
 ## Scope
@@ -32,7 +35,12 @@ automatic semantic segmentation, path morphing, bones/IK, physics, or texture co
 
 ## Install and inspect the surface
 
-A Rust toolchain with Cargo is required to build the product.
+A Rust toolchain with Cargo is required to build the product from source.
+
+For Apple Silicon macOS, download
+[`perfectpixel-macos-arm64.zip`](https://github.com/AxiomOrient/perfectpixel/releases/latest/download/perfectpixel-macos-arm64.zip),
+verify its published SHA-256 digest, extract it, and run `perfectpixel --help` from the
+extracted directory. The binary is a command-line tool; it has no graphical application shell.
 
 ```bash
 cargo build --release --locked
@@ -151,3 +159,6 @@ The source publication contains the Rust crate, tests, contracts, documentation,
 local verification inputs. `target/`, local verification evidence, generated sprite
 outputs, and review workspaces are not source inputs. The CLI may write user-selected
 asset outputs, but it does not upload them or publish them to a service.
+
+Direct dependency attribution and source-publication limits are recorded in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
