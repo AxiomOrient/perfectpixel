@@ -1,0 +1,19 @@
+{
+  "bundleDigest": "sha256-f8e97eb77cf2ff9ec5bcf8e9fc4ca3bec0a13032bd805d9de2e7687e98efe47f",
+  "bundleId": "foundation-legacy-compatibility/1",
+  "fixedGates": {
+    "enforceResourceLimits": true,
+    "preserveProtectedFeatures": true,
+    "rejectUnsupportedContent": true,
+    "requireSecurityGate": true
+  },
+  "foundationId": "perfectpixel.vector-foundation/1",
+  "thresholds": {
+    "maximumInputPixels": 16777216,
+    "maximumPaths": 64,
+    "maximumSvgBytes": 1048576,
+    "minimumLocalLumaSsim": 0.99,
+    "minimumQualityScore": 0.995,
+    "minimumWorstBlockLumaSsim": 0.95
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "kind": "family-calibration-promotion-manifest",
+  "manifestDigest": "sha256-e3ae6db280d8279793255a913524c58d76ff00e3c2591e3f65122e9badb72ee1",
+  "promotions": [
+    {
+      "decision": "machine-pass",
+      "evaluationSha256": "e1755828e0e4da9100e2f758171ad3394e709e8f4ed77d991592caa4f7c44de3",
+      "family": "pixel-art",
+      "familyThresholdBundleDigest": "sha256-b0c4afc9c49564dc70df83e6b0102bf1a0cecb7743934900ec6955293113ec00",
+      "inputFamily": "pixel-art",
+      "machinePass": true,
+      "outputProfile": "perfectpixel.svg-editable/1",
+      "policyVersion": "perfectpixel.vector-policy/1",
+      "predecessorEntryDigest": "sha256-312445bbfa0b542462784232da2ff653891d2c16624b8a0b005565f38e0ab4e3",
+      "profileVersion": "perfectpixel.profile/1",
+      "promotedEntryDigest": "sha256-743647c5fbafaaf30cda3fbb683f1c6aaa17a0abd7f8ba53a205efaa06904260",
+      "reviewSha256": "f5e95fa23fe0ceb1d3eac60632c605a7aad1a590a92a62ab6aae2b782f5be4a8"
+    },
+    {
+      "decision": "machine-pass",
+      "evaluationSha256": "e8f99b4eafb0c6c884dc14784f0074147cac4616726cb228f15a8bafb25c6896",
+      "family": "flat-icon",
+      "familyThresholdBundleDigest": "sha256-7781d1b1f9773daeb006ccf84c31798b19805a8e6bf9887e4d6dd5a10355b7db",
+      "inputFamily": "flat-icon",
+      "machinePass": true,
+      "outputProfile": "perfectpixel.svg-editable/1",
+      "policyVersion": "perfectpixel.vector-policy/1",
+      "predecessorEntryDigest": "sha256-f401c9c8d30c34a92c5b41a2c62433b6fc8ba4e4ee295aca1207c978e4b31948",
+      "profileVersion": "perfectpixel.profile/1",
+      "promotedEntryDigest": "sha256-ca69033d0ae7972eb0b2713e085a03fa5e7b0c8bc3c2c92cc5c7e183bfbebd4d",
+      "reviewSha256": "353f9cc820c51ce236eeda35916c83022d86d9fb0850da566faec595b61750d5"
+    },
+    {
+      "decision": "machine-pass",
+      "evaluationSha256": "9e771bff1422ad1934538ade54573dac8145b28841cf20de9b61922778807e45",
+      "family": "line-art",
+      "familyThresholdBundleDigest": "sha256-83a22032e5612b3266ddca0a2a90054edd66eb32989aa7c595404a5ab31bec65",
+      "inputFamily": "line-art",
+      "machinePass": true,
+      "outputProfile": "perfectpixel.svg-editable/1",
+      "policyVersion": "perfectpixel.vector-policy/1",
+      "predecessorEntryDigest": "sha256-f86422e87fffc080e28ee95fa9c85b4aa3567e8560999e0479a458ee4ef3e2c4",
+      "profileVersion": "perfectpixel.profile/1",
+      "promotedEntryDigest": "sha256-356f3ee2d28b448cc509a0d962f36a5875fc317c1368dc3db6650306d8746e94",
+      "reviewSha256": "7764473dca20601af1aa346980e2130cfca0a232a803f9b36b7999c1f08f2041"
+    },
+    {
+      "decision": "machine-pass",
+      "evaluationSha256": "3087760a8b2a7ac27a79b1b434d2d62b825ad68bdb6bbe1aeefe9c2d0759074a",
+      "family": "bounded-illustration",
+      "familyThresholdBundleDigest": "sha256-3ba3fa7723de21f61d506e3bf417652bfc487a8952c90e42da8c264f9a2addd0",
+      "inputFamily": "bounded-illustration",
+      "machinePass": true,
+      "outputProfile": "perfectpixel.svg-editable/1",
+      "policyVersion": "perfectpixel.vector-policy/1",
+      "predecessorEntryDigest": "sha256-b3c100b08183c35880b3723b06dab8241c2751778a84b9792536282383f003c7",
+      "profileVersion": "perfectpixel.profile/1",
+      "promotedEntryDigest": "sha256-679b61cb391d72ffc2f6c72968bb614209148e62664b56252a9cec2b90532709",
+      "reviewSha256": "1e0e3f84039df3bd6ebd52e849ae1e072a8a78159657ff8ea5ee9e9fa52401cb"
+    }
+  ],
+  "registryDigest": "sha256-32309db88add6e55568f7493d2802e27b4c5b08dca24882f24c1781e04650e52",
+  "schemaVersion": 1
+}

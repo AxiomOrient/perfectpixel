@@ -1,0 +1,157 @@
+{
+  "schema": "perfectpixel.vector-evaluation/3",
+  "inputDigest": "1e8e16f3ad7ea0c2a72c99128f4a526106397bf3cc6a0c79a0f6cc1c47257ed1",
+  "preset": "pixel-art",
+  "profile": "compact",
+  "evidence": {
+    "geometry": {
+      "hardGridLikelihood": 0.0,
+      "horizontalRunRatio": 0.25,
+      "strongEdgeRatio": 0.12903225806451613
+    },
+    "paint": {
+      "paletteLikelihood": 0.7916666666666666,
+      "uniqueColorCount": 64.0
+    },
+    "alpha": {
+      "partialAlphaRatio": 0.0,
+      "transparentPixelRatio": 0.0
+    },
+    "complexity": {
+      "estimatedRegionComplexity": 0.265625,
+      "pixelCount": 1024.0
+    },
+    "sourceNoise": {
+      "isolatedPixelRatio": 0.0,
+      "sourceNoiseLikelihood": 0.0
+    },
+    "confidence": 0.5813802083333333,
+    "conflicts": [],
+    "abstained": true,
+    "expectedSupport": "failed",
+    "recommendedPresets": []
+  },
+  "constraints": {
+    "maximumQualityLoss": {
+      "requested": 0.005,
+      "approved": 0.0050000000000000044,
+      "effective": 0.005,
+      "applied": 0.005,
+      "applicable": "passed",
+      "attemptedRelaxation": false
+    },
+    "minimumQuality": {
+      "requested": 0.995,
+      "approved": 0.995,
+      "effective": 0.995,
+      "applied": 0.995,
+      "applicable": "passed",
+      "attemptedRelaxation": false
+    }
+  },
+  "pathLimit": {
+    "requested": 64,
+    "approved": 64,
+    "effective": 64,
+    "applied": 64,
+    "applicable": "passed",
+    "attemptedRelaxation": false
+  },
+  "digests": {
+    "backend": "sha256-5ab06506789fdc574dbf9f468805d6bf37ace87cfed87277fd02d3917ef48da2",
+    "route": "sha256-05685ec7a7a3d746af82f05e5983ff1a539490827f0cd60fa33e425a7eda2eab",
+    "registry": "sha256-74ab94b79527e12395f94bed182cfb0a3678e2de3a12f920d6369553d187a8e5",
+    "registryEntry": "sha256-05685ec7a7a3d746af82f05e5983ff1a539490827f0cd60fa33e425a7eda2eab",
+    "thresholdBundle": "sha256-a8890f4a4b8f6031614cf9d89fcc76cace1326d7e71eddae5a195712b9ec592b",
+    "normalizedRequest": null,
+    "policy": "sha256-7f5de28258dedbb6895aa2fd17e98e562e1045e65af8b92e18fed5871cb7a3c0",
+    "profile": "sha256-262535d0e39f135fb7f9a07505d85062e615f44b7114538217ccdc8001db893d",
+    "foundation": "sha256-68f9f730e7578760a5cc5e026db19133318bac0bed5c81b86b4001061a1175b7",
+    "report": "sha256-962c423b7aa6e6de99010847b38943e3c0c9c9683e84d53ec264d9bb7152bcef",
+    "motion": null,
+    "candidateBytes": "sha256-87e010919226d5cbdd94fea0b472b470fd0c9e88ce2f74ec6768d948d20eddba"
+  },
+  "candidateFacts": {
+    "candidateSha256": "sha256-87e010919226d5cbdd94fea0b472b470fd0c9e88ce2f74ec6768d948d20eddba",
+    "candidateByteCount": 5158,
+    "renderBackSha256": "sha256-1e8e16f3ad7ea0c2a72c99128f4a526106397bf3cc6a0c79a0f6cc1c47257ed1",
+    "width": 32,
+    "height": 32,
+    "pathCount": 64,
+    "colorCount": 64,
+    "nodeCount": 768,
+    "curveSegmentCount": 0,
+    "closedPathCount": 64,
+    "adaptive": null,
+    "topology": {
+      "sourceComponents": 1,
+      "candidateComponents": 1,
+      "sourceHoles": 0,
+      "candidateHoles": 0,
+      "mismatchedMaskPixels": 0
+    }
+  },
+  "fixedGates": {
+    "security": "passed",
+    "unsupportedContent": "passed"
+  },
+  "protectedGates": {
+    "alpha": "passed",
+    "edges": "passed",
+    "endpoints": "passed",
+    "features": "passed",
+    "interiorTranslucency": "passed",
+    "junctions": "passed",
+    "palette": "passed",
+    "topology": "passed"
+  },
+  "calibratedGates": {
+    "localLumaSsim": "passed",
+    "qualityLoss": "passed",
+    "qualityScore": "passed",
+    "worstBlockLumaSsim": "passed"
+  },
+  "resourceGates": {
+    "distinctColors": "passed",
+    "inputPixels": "passed",
+    "paths": "passed",
+    "svgBytes": "passed"
+  },
+  "profilePredicates": {
+    "compact": "passed",
+    "motionStructure": "notEvaluated"
+  },
+  "gateMeasurements": {
+    "fixed": {},
+    "protected": {},
+    "calibrated": {},
+    "resource": {},
+    "outputProfile": {}
+  },
+  "actualDecision": "approved",
+  "rejectionCodes": [],
+  "rejectionReasons": [],
+  "artifactIntent": {
+    "requested": true,
+    "artifacts": [
+      {
+        "relativePath": "candidate.svg",
+        "digest": "87e010919226d5cbdd94fea0b472b470fd0c9e88ce2f74ec6768d948d20eddba",
+        "mediaType": "image/svg+xml",
+        "byteCount": 5158
+      },
+      {
+        "relativePath": "render-back.png",
+        "digest": "9827ff4d1b200d44f92203968a2620845b8752bb4e4556e5f7ad5f6c2d67332a",
+        "mediaType": "image/png",
+        "byteCount": 255
+      }
+    ]
+  },
+  "environmentMeasurements": {
+    "renderTimeMs": null,
+    "peakMemoryBytes": null,
+    "throughputPixelsPerSecond": null,
+    "machineProtocolId": null
+  }
+}

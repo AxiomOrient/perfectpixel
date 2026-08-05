@@ -1,0 +1,114 @@
+{
+  "schema": "perfectpixel.vector-evaluation/3",
+  "inputDigest": "8096994e3635c4d0cfb26cb1dce2592dd905d8069b5fe1ce244937f78491976b",
+  "preset": "auto",
+  "profile": "compact",
+  "evidence": {
+    "geometry": {
+      "hardGridLikelihood": 0.0,
+      "horizontalRunRatio": 0.7080078125,
+      "strongEdgeRatio": 0.6824596774193549
+    },
+    "paint": {
+      "paletteLikelihood": 0.8958333333333334,
+      "uniqueColorCount": 32.0
+    },
+    "alpha": {
+      "partialAlphaRatio": 0.0,
+      "transparentPixelRatio": 0.3330078125
+    },
+    "complexity": {
+      "estimatedRegionComplexity": 0.730133056640625,
+      "pixelCount": 1024.0
+    },
+    "sourceNoise": {
+      "isolatedPixelRatio": 0.3427734375,
+      "sourceNoiseLikelihood": 1.0
+    },
+    "confidence": 0.3330078125,
+    "conflicts": [
+      "HighSourceNoise"
+    ],
+    "abstained": true,
+    "expectedSupport": "failed",
+    "recommendedPresets": []
+  },
+  "constraints": {},
+  "pathLimit": {
+    "requested": null,
+    "approved": null,
+    "effective": null,
+    "applied": null,
+    "applicable": "notEvaluated",
+    "attemptedRelaxation": false
+  },
+  "digests": {
+    "backend": null,
+    "route": null,
+    "registry": "sha256-74ab94b79527e12395f94bed182cfb0a3678e2de3a12f920d6369553d187a8e5",
+    "registryEntry": null,
+    "thresholdBundle": "sha256-f8e97eb77cf2ff9ec5bcf8e9fc4ca3bec0a13032bd805d9de2e7687e98efe47f",
+    "normalizedRequest": null,
+    "policy": "sha256-7f5de28258dedbb6895aa2fd17e98e562e1045e65af8b92e18fed5871cb7a3c0",
+    "profile": "sha256-262535d0e39f135fb7f9a07505d85062e615f44b7114538217ccdc8001db893d",
+    "foundation": "sha256-c34a6d40189867e6c88dadd8e298e1bab8b52a4bb7c1df9765bbf1eb19ee34b7",
+    "report": "sha256-962c423b7aa6e6de99010847b38943e3c0c9c9683e84d53ec264d9bb7152bcef",
+    "motion": null,
+    "candidateBytes": null
+  },
+  "candidateFacts": null,
+  "fixedGates": {
+    "security": "notEvaluated",
+    "unsupportedContent": "notEvaluated"
+  },
+  "protectedGates": {
+    "alpha": "notEvaluated",
+    "edges": "notEvaluated",
+    "endpoints": "notEvaluated",
+    "features": "notEvaluated",
+    "interiorTranslucency": "notEvaluated",
+    "junctions": "notEvaluated",
+    "palette": "notEvaluated",
+    "topology": "notEvaluated"
+  },
+  "calibratedGates": {
+    "localLumaSsim": "notEvaluated",
+    "qualityLoss": "notEvaluated",
+    "qualityScore": "notEvaluated",
+    "worstBlockLumaSsim": "notEvaluated"
+  },
+  "resourceGates": {
+    "distinctColors": "notEvaluated",
+    "inputPixels": "notEvaluated",
+    "paths": "notEvaluated",
+    "svgBytes": "notEvaluated"
+  },
+  "profilePredicates": {
+    "compact": "notEvaluated",
+    "motionStructure": "notEvaluated"
+  },
+  "gateMeasurements": {
+    "fixed": {},
+    "protected": {},
+    "calibrated": {},
+    "resource": {},
+    "outputProfile": {}
+  },
+  "actualDecision": "notApplicable",
+  "rejectionCodes": [
+    "PRESET_REQUIRED"
+  ],
+  "rejectionReasons": [
+    "automatic classification abstained; an explicit preset is required"
+  ],
+  "artifactIntent": {
+    "requested": false,
+    "artifacts": []
+  },
+  "environmentMeasurements": {
+    "renderTimeMs": null,
+    "peakMemoryBytes": null,
+    "throughputPixelsPerSecond": null,
+    "machineProtocolId": null
+  }
+}

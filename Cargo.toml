@@ -1,0 +1,26 @@
+[package]
+name = "perfectpixel"
+version = "0.3.0"
+edition = "2021"
+rust-version = "1.97"
+license = "MIT"
+description = "Deterministic local raster, sprite, vector, and motion asset compiler."
+
+[lib]
+name = "perfectpixel"
+path = "src/lib.rs"
+
+[[bin]]
+name = "perfectpixel"
+path = "src/bin/perfectpixel.rs"
+
+[dependencies]
+binpack2d = "=1.0.1"
+fast_image_resize = "=6.1.0"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+svgtypes = "=0.16.1"
+thiserror = "1"
+resvg = { version = "0.47", default-features = false }
+roxmltree = "=0.21.1"
