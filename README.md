@@ -10,7 +10,7 @@ implementation, and tests are the executable source of truth.
 Everything runs locally. Build from a checkout with Cargo, or download the Apple Silicon
 macOS CLI archive from [GitHub Releases](https://github.com/AxiomOrient/perfectpixel/releases).
 The project introduction is available at
-[AxiomOrient GitHub Pages](https://axiomorient.github.io/perfectpixel/); it does not process
+[AxiomOrient GitHub Pages](https://axiomorient.com/perfectpixel/); it does not process
 or receive user files. Behavioral verification is provided by `cargo test`; source publication
 also requires the formatting, Clippy, and documentation-contract checks listed below.
 
