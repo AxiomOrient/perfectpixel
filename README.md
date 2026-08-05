@@ -7,8 +7,7 @@ bounded transform/opacity motion artifacts from raster-free SVG.
 [The product contract](docs/CONTRACT.md) is the user-facing behavior record; the CLI schema,
 implementation, and tests are the executable source of truth.
 
-Everything runs locally. Build from a checkout with Cargo, or download the Apple Silicon
-macOS CLI archive from [GitHub Releases](https://github.com/AxiomOrient/perfectpixel/releases).
+Everything runs locally from a checkout with Cargo. There is no packaged binary download.
 The project introduction is available at
 [AxiomOrient GitHub Pages](https://axiomorient.com/perfectpixel/); it does not process
 or receive user files. Behavioral verification is provided by `cargo test`; source publication
@@ -35,12 +34,8 @@ automatic semantic segmentation, path morphing, bones/IK, physics, or texture co
 
 ## Install and inspect the surface
 
-A Rust toolchain with Cargo is required to build the product from source.
-
-For Apple Silicon macOS, download
-[`perfectpixel-macos-arm64.zip`](https://github.com/AxiomOrient/perfectpixel/releases/latest/download/perfectpixel-macos-arm64.zip),
-verify its published SHA-256 digest, extract it, and run `perfectpixel --help` from the
-extracted directory. The binary is a command-line tool; it has no graphical application shell.
+A Rust toolchain with Cargo is required to build the product from source. PerfectPixel is a
+command-line tool; it has no graphical application shell.
 
 ```bash
 cargo build --release --locked
