@@ -32,8 +32,8 @@ use cli_input::*;
 use generation::GenerationWorkflow;
 use generation_adapter::{
     plan_generation_publication, validate_generation_artifact_count, validate_input_snapshot_count,
-    validate_input_snapshot_set, verify_generation_publication, GeneratedArtifact,
-    GenerationPublicationRequest, InputSnapshot,
+    validate_input_snapshot_set, verify_generation_publication, verify_input_snapshots,
+    GeneratedArtifact, GenerationPublicationRequest, InputSnapshot,
 };
 pub use perfectpixel::{PpError, PpResult};
 const MAX_CONTROL_READ_BYTES: usize = 8 * 1024 * 1024;
@@ -44,8 +44,16 @@ const MAX_GENERATION_DECODED_RASTER_BYTES: usize = 512 * 1024 * 1024;
 const VECTOR_DIAGNOSTICS_OWNERSHIP_FILE: &str = ".perfectpixel-vector-diagnostics.json";
 const VECTOR_DIAGNOSTICS_OWNERSHIP_SCHEMA: &str = "perfectpixel.vector-diagnostics-ownership/1";
 const MAX_VECTOR_DIAGNOSTIC_ENTRIES: usize = 64;
+const ASSET_INSPECTION_SCHEMA: &str = "perfectpixel.asset-inspection/1";
+const ASSET_TRANSFORM_SCHEMA: &str = "perfectpixel.asset-transform/1";
+const ASSET_DIGEST_ENCODING: &str = "sha256-lowercase-hex";
 
 const HELP: &str = r#"perfectpixel 0.3.0
+
+PRODUCT
+  deterministic asset compiler for AI-generated or authored local assets.
+  It finalizes generated assets; it does not generate images or run AI models.
+  No network is required. Successful outputs are evaluated before atomic publication.
 
 USAGE
   perfectpixel schema
@@ -103,7 +111,7 @@ BUNDLE OUTPUT
   frames/<state>/frame-NN.png
 
 VECTOR WORKFLOW
-  vector is the sole SVG publication command and publishes only approved exact SVG bytes.
+  vector is the sole raster-to-SVG quality-gated publication command and publishes only approved exact SVG bytes.
   vector-analyze produces analysis evidence only and cannot publish SVG or diagnostics.
   JPEG output rejects transparent pixels unless --background explicitly selects a #RRGGBB matte.
   WebP output is lossless and preserves RGBA; lossy WebP is intentionally not an implicit fallback.
@@ -111,7 +119,8 @@ VECTOR WORKFLOW
 MOTION WORKFLOW
   motion-scaffold assigns stable path IDs and writes scene.svg, layers.json,
   motion-request.json, and layer-inspector.html. Fill the starter request's parts and tracks.
-  motion-build writes animated.svg, animation.json, motion-report.json, preview.html, and an
+  motion-build may publish derived animated.svg from an accepted raster-free SVG source. It writes
+  animation.json, motion-report.json, preview.html, and an
   exploded dotLottie v2 layout under dotlottie/. Version 1 animates transform and opacity.
   The exploded layout is not a packed .lottie archive; use an official dotLottie packer later.
 "#;
@@ -228,6 +237,10 @@ fn run(args: Vec<String>) -> PpResult<String> {
 fn schema() -> PpResult<String> {
     serde_json::to_string_pretty(&SchemaPayload {
         cli_version: env!("CARGO_PKG_VERSION"),
+        role: "deterministic-asset-compiler",
+        model_inference: false,
+        network_required: false,
+        publication_policy: "evaluate-before-publish",
         commands: &[
             "schema",
             "inspect",
@@ -273,7 +286,10 @@ fn schema() -> PpResult<String> {
         asset_adapter: AssetAdapterSchema {
             raster_inputs: &["png", "jpg", "jpeg", "webp"],
             raster_outputs: &["png", "jpg", "jpeg", "webp"],
-            commands: &["convert", "upscale"],
+            commands: &["inspect", "convert", "upscale"],
+            inspection_schema: ASSET_INSPECTION_SCHEMA,
+            transform_schema: ASSET_TRANSFORM_SCHEMA,
+            digest_encoding: ASSET_DIGEST_ENCODING,
             jpeg_alpha: "transparent input requires --background #RRGGBB",
             webp_output: "lossless RGBA",
             convert_filters: &["nearest", "lanczos3"],
@@ -330,10 +346,15 @@ fn inspect(args: &[String]) -> PpResult<String> {
     }
     let input = PathBuf::from(&args[0]);
     validate_raster_input_path(&input)?;
-    let image = ImageCodec::decode_rgba(&input, DecodeLimits::default())?;
+    let bytes = read_bytes_limited(&input, MAX_RASTER_READ_BYTES)?;
+    let image = ImageCodec::decode_rgba_bytes(&input, &bytes, DecodeLimits::default())?;
     let inspection = inspect_raster(&image);
     serde_json::to_string_pretty(&InspectPayload {
+        schema: ASSET_INSPECTION_SCHEMA,
         ok: true,
+        input: input.display().to_string(),
+        input_sha256: perfectpixel::sha256_hex(&bytes),
+        input_byte_count: asset_byte_count(&bytes)?,
         inspection,
     })
     .map_err(|source| PpError::Json {
@@ -427,7 +448,10 @@ fn asset_options(
         .map(parse_resample_filter)
         .transpose()?
         .unwrap_or(default_filter);
-    let source = ImageCodec::decode_rgba(&input, DecodeLimits::default())?;
+    let source_bytes = read_bytes_limited(&input, MAX_RASTER_READ_BYTES)?;
+    let input_sha256 = perfectpixel::sha256_hex(&source_bytes);
+    let input_byte_count = asset_byte_count(&source_bytes)?;
+    let source = ImageCodec::decode_rgba_bytes(&input, &source_bytes, DecodeLimits::default())?;
 
     Ok(AssetCliOptions {
         input,
@@ -436,6 +460,8 @@ fn asset_options(
         filter,
         jpeg_quality,
         background,
+        input_sha256,
+        input_byte_count,
         source_width: source.width(),
         source_height: source.height(),
         source,
@@ -511,14 +537,20 @@ fn write_asset_transform(
             background: options.background,
         },
     )?;
+    let output_sha256 = perfectpixel::sha256_hex(&bytes);
+    let output_byte_count = asset_byte_count(&bytes)?;
     AtomicFileWriter::write_bytes(&options.output, &bytes)?;
     serialize_json(
         &AssetTransformSummary {
-            schema: "perfectpixel.asset-transform/1",
+            schema: ASSET_TRANSFORM_SCHEMA,
             ok: true,
             command,
             input: options.input.display().to_string(),
             output: options.output.display().to_string(),
+            input_sha256: options.input_sha256,
+            input_byte_count: options.input_byte_count,
+            output_sha256,
+            output_byte_count,
             input_width: options.source_width,
             input_height: options.source_height,
             output_width: image.width(),
@@ -528,6 +560,11 @@ fn write_asset_transform(
         },
         "<asset-transform-summary>",
     )
+}
+
+fn asset_byte_count(bytes: &[u8]) -> PpResult<u64> {
+    u64::try_from(bytes.len())
+        .map_err(|_| PpError::InvalidRequest("asset byte count overflow".to_string()))
 }
 
 fn parse_positive_u32(raw: &str) -> PpResult<u32> {
@@ -678,7 +715,7 @@ fn bundle(args: &[String]) -> PpResult<String> {
 fn vector(args: &[String]) -> PpResult<String> {
     let options = vector_options(args, true)?;
     preflight_vector_static_destinations(&options)?;
-    let image = ImageCodec::decode_rgba(&options.input, DecodeLimits::default())?;
+    let (image, input_snapshot) = decode_raster_snapshot(&options.input)?;
     let outcome = Vectorizer::new()?.run(&image, &options.generation_request()?)?;
     let report = match &outcome {
         VectorOutcome::Approved(output) => output.report(),
@@ -756,6 +793,15 @@ fn vector(args: &[String]) -> PpResult<String> {
                 error,
             )?);
         }
+        if let Err(error) = verify_input_snapshots(std::slice::from_ref(&input_snapshot)) {
+            transaction = transaction.reduce(CliTransactionEvent::ReportFailed)?;
+            return Err(vector_transaction_failure(
+                report,
+                transaction,
+                "report",
+                error,
+            )?);
+        }
         if let Err(error) = AtomicFileWriter::write_text(path, &report_json) {
             transaction = transaction.reduce(CliTransactionEvent::ReportFailed)?;
             return Err(vector_transaction_failure(
@@ -770,6 +816,15 @@ fn vector(args: &[String]) -> PpResult<String> {
 
     if let (Some(path), Some(entries)) = (&options.diagnostics, diagnostic_entries.as_deref()) {
         if let Err(error) = preflight_vector_diagnostics_destination(path) {
+            transaction = transaction.reduce(CliTransactionEvent::DiagnosticsFailed)?;
+            return Err(vector_transaction_failure(
+                report,
+                transaction,
+                "diagnostics",
+                error,
+            )?);
+        }
+        if let Err(error) = verify_input_snapshots(std::slice::from_ref(&input_snapshot)) {
             transaction = transaction.reduce(CliTransactionEvent::DiagnosticsFailed)?;
             return Err(vector_transaction_failure(
                 report,
@@ -793,6 +848,15 @@ fn vector(args: &[String]) -> PpResult<String> {
     match &outcome {
         VectorOutcome::Approved(output) => {
             if let Err(error) = preflight_vector_file_destination(&options.output) {
+                transaction = transaction.reduce(CliTransactionEvent::FinalSvgFailed)?;
+                return Err(vector_transaction_failure(
+                    report,
+                    transaction,
+                    "finalSvg",
+                    error,
+                )?);
+            }
+            if let Err(error) = verify_input_snapshots(std::slice::from_ref(&input_snapshot)) {
                 transaction = transaction.reduce(CliTransactionEvent::FinalSvgFailed)?;
                 return Err(vector_transaction_failure(
                     report,
@@ -846,14 +910,21 @@ fn vector_analyze(args: &[String]) -> PpResult<String> {
     let options = vector_options(args, false)?;
     preflight_vector_static_destinations(&options)?;
     let request = options.analysis_request()?;
-    let analysis = Vectorizer::new()?.analyze(
-        &ImageCodec::decode_rgba(&options.input, DecodeLimits::default())?,
-        &request,
-    )?;
+    let (image, input_snapshot) = decode_raster_snapshot(&options.input)?;
+    let analysis = Vectorizer::new()?.analyze(&image, &request)?;
     let analysis_json = serialize_json(&analysis, "<vector-analysis>")?;
     let mut transaction = CliTransactionOutcome::analysis(options.report.is_some());
     if let Some(path) = &options.report {
         if let Err(error) = preflight_vector_file_destination(path) {
+            transaction = transaction.reduce(CliTransactionEvent::ReportFailed)?;
+            return Err(vector_analysis_transaction_failure(
+                &analysis,
+                transaction,
+                "report",
+                error,
+            )?);
+        }
+        if let Err(error) = verify_input_snapshots(std::slice::from_ref(&input_snapshot)) {
             transaction = transaction.reduce(CliTransactionEvent::ReportFailed)?;
             return Err(vector_analysis_transaction_failure(
                 &analysis,
@@ -2390,6 +2461,8 @@ struct AssetCliOptions {
     filter: ResampleFilter,
     jpeg_quality: u8,
     background: Option<[u8; 3]>,
+    input_sha256: String,
+    input_byte_count: u64,
     source_width: u32,
     source_height: u32,
     source: perfectpixel::Raster,
@@ -2439,6 +2512,10 @@ impl VectorCliOptions {
 #[serde(rename_all = "camelCase")]
 struct SchemaPayload {
     cli_version: &'static str,
+    role: &'static str,
+    model_inference: bool,
+    network_required: bool,
+    publication_policy: &'static str,
     commands: &'static [&'static str],
     normalize_schema: &'static str,
     normalize_outputs: &'static [&'static str],
@@ -2464,6 +2541,9 @@ struct AssetAdapterSchema {
     raster_inputs: &'static [&'static str],
     raster_outputs: &'static [&'static str],
     commands: &'static [&'static str],
+    inspection_schema: &'static str,
+    transform_schema: &'static str,
+    digest_encoding: &'static str,
     jpeg_alpha: &'static str,
     webp_output: &'static str,
     convert_filters: &'static [&'static str],
@@ -2522,7 +2602,11 @@ struct PackingDefaultsPayload {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct InspectPayload {
+    schema: &'static str,
     ok: bool,
+    input: String,
+    input_sha256: String,
+    input_byte_count: u64,
     #[serde(flatten)]
     inspection: RasterInspection,
 }
@@ -2535,6 +2619,10 @@ struct AssetTransformSummary {
     command: &'static str,
     input: String,
     output: String,
+    input_sha256: String,
+    input_byte_count: u64,
+    output_sha256: String,
+    output_byte_count: u64,
     input_width: u32,
     input_height: u32,
     output_width: u32,

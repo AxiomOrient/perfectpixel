@@ -1,6 +1,6 @@
 # Vector Quality Contract
 
-Status: Current normative quality and route-activation contract for the 0.2.0 vector runtime.
+Status: Current normative quality and route-activation contract for the 0.3.0 vector runtime.
 
 Normative: Yes — quality and gate rules grounded in the approved Vector/SVG Transition Roadmap.
 
@@ -8,7 +8,10 @@ Implemented: Yes. These gates protect every publishing route.
 
 ## Approval model
 
-Every SVG publication, including output produced by a private frozen legacy backend, requires candidate-bound evaluation through the universal policy envelope. Machine hard gates and a compatible approved calibrated bundle run before visual review; visual review cannot override a failure. An approval is about exact candidate bytes, not a serializable report.
+Every raster-to-SVG publication through `vector`, including output produced by a private frozen
+legacy backend, requires candidate-bound evaluation through the universal policy envelope. Machine
+hard gates and a compatible approved calibrated bundle run before visual review; visual review cannot
+override a failure. An approval is about exact candidate bytes, not a serializable report.
 
 A publishing route is eligible only when its embedded route entry, private backend source-closure digest, foundation/report digests, requested profile predicate, and approved threshold-bundle digest form a verified closure. No route may lower a gate. Domain unavailability or an incompatible/withdrawn route yields `UNSUPPORTED`; invalid embedded authority prevents `Vectorizer` construction and is never converted into a domain fallback.
 

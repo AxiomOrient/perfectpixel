@@ -6,7 +6,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use perfectpixel::{PngEncoder, Raster};
+use perfectpixel::{sha256_hex, PngEncoder, Raster};
 
 fn temp_case(label: &str) -> PathBuf {
     let stamp = SystemTime::now()
@@ -130,6 +130,11 @@ fn vector_schema_help_and_option_vocabulary_are_exact() {
     let help = String::from_utf8(run(&["--help"]).stdout).unwrap();
     assert!(help.contains("perfectpixel vector <input.png|jpg|jpeg|webp> --out <output.svg> [--preset auto|pixel-art|legacy-lossless|flat-icon|line-art|bounded-illustration] [--profile compact|motion-structure-ready] [--detail auto|1|2|3|4|5] [--min-quality <0..1>] [--max-quality-loss <0..1>] [--max-paths <positive integer>] [--policy <vector-policy.json>] [--report <evaluation.json>] [--diagnostics <dir>]"));
     assert!(help.contains("perfectpixel vector-analyze <input.png|jpg|jpeg|webp> [--preset auto|pixel-art|legacy-lossless|flat-icon|line-art|bounded-illustration] [--profile compact|motion-structure-ready] [--policy <vector-policy.json>] [--report <analysis.json>]"));
+    assert!(help.contains("vector is the sole raster-to-SVG quality-gated publication command"));
+    assert!(help.contains(
+        "motion-build may publish derived animated.svg from an accepted raster-free SVG source"
+    ));
+    assert!(!help.contains("vector is the sole SVG publication command"));
     let bare_help = run(&["help"]);
     assert_eq!(bare_help.status.code(), Some(2));
     assert_eq!(
@@ -189,6 +194,46 @@ fn analysis_is_identity_report_with_default_environment_nulls_and_no_unrequested
         fs::read_dir(&root).unwrap().count(),
         2,
         "analysis without --report must not create artifacts"
+    );
+}
+
+#[test]
+fn vector_snapshot_guard_is_raw_file_evidence_while_input_digest_is_semantic_rgba() {
+    let root = temp_case("snapshot-semantic-digest");
+    let png = raster(&root, "input.png", false);
+    let webp = root.join("input.webp");
+    let converted = run(&[
+        "convert",
+        png.to_str().unwrap(),
+        "--out",
+        webp.to_str().unwrap(),
+    ]);
+    assert_eq!(converted.status.code(), Some(0));
+    assert_ne!(
+        sha256_hex(&fs::read(&png).unwrap()),
+        sha256_hex(&fs::read(&webp).unwrap()),
+        "the raw source files must remain distinct evidence"
+    );
+
+    let png_analysis = run(&[
+        "vector-analyze",
+        png.to_str().unwrap(),
+        "--preset",
+        "flat-icon",
+    ]);
+    let webp_analysis = run(&[
+        "vector-analyze",
+        webp.to_str().unwrap(),
+        "--preset",
+        "flat-icon",
+    ]);
+    assert_eq!(png_analysis.status.code(), Some(0));
+    assert_eq!(webp_analysis.status.code(), Some(0));
+    let png_json = json(&png_analysis);
+    let webp_json = json(&webp_analysis);
+    assert_eq!(
+        png_json["analysis"]["inputDigest"], webp_json["analysis"]["inputDigest"],
+        "semantic RGBA identity must not become a raw file digest"
     );
 }
 

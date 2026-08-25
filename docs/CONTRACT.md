@@ -6,6 +6,20 @@ This document defines the public behavior of the local Rust CLI. Where it and th
 disagree, the code and its tests win — see the [Verification Contract](#verification-contract)
 for the gate that keeps them together.
 
+## Product Boundary
+
+`perfectpixel schema` identifies the CLI with `role: "deterministic-asset-compiler"`.
+It finalizes AI-generated or authored local assets; image generation and model inference are
+outside this product. The machine-readable boundary is `modelInference: false` and
+`networkRequired: false`. Publication follows `publicationPolicy: "evaluate-before-publish"`:
+quality and format checks complete before an atomic file replacement becomes visible.
+
+The raster adapter advertises these stable evidence contracts under `assetAdapter`:
+
+- `inspectionSchema: "perfectpixel.asset-inspection/1"`;
+- `transformSchema: "perfectpixel.asset-transform/1"`; and
+- `digestEncoding: "sha256-lowercase-hex"`.
+
 ## Public Commands
 
 ```txt
@@ -25,8 +39,15 @@ perfectpixel motion-build --request <motion-request.json> --out-dir <dir>
 
 `convert` and `upscale` are CLI adapters over the format-independent `Raster` transform core.
 They accept PNG, JPG, JPEG, and WebP inputs and select PNG, JPEG, or WebP output from the
-`--out` extension. They cannot produce SVG; `vector` remains the sole quality-gated SVG
-publication command.
+`--out` extension. They cannot produce SVG; `vector` is the sole raster-to-SVG quality-gated
+publication command. `motion-build` is separate: it may publish derived `animated.svg` from an
+accepted raster-free SVG source, but it does not convert raster input or grant vector publication
+authority.
+
+`inspect` reads at most the bounded raster input limit once, decodes that exact byte vector, and
+prints `perfectpixel.asset-inspection/1`. Its success JSON adds `schema`, `ok`, `input`,
+`inputSha256`, and `inputByteCount` to the existing raster facts. `inputSha256` is the lowercase
+64-hex SHA-256 of the bytes that were decoded, and `inputByteCount` is their exact length.
 
 `convert` changes only the file format when neither `--width` nor `--height` is supplied. With
 one dimension it preserves the input aspect ratio using nearest-integer rounding; with both it
@@ -48,6 +69,12 @@ rename preserves the previous destination; if parent-directory synchronization f
 the command returns an explicit I/O error stating that the replacement may already be visible. A
 failure to confirm directory durability is never converted to success. The asset adapter does not
 silently select lossy WebP, AI upscaling, or a generic SVG conversion route.
+
+The transform summary keeps the existing fields and adds `inputSha256`, `inputByteCount`,
+`outputSha256`, and `outputByteCount`. The input fields describe the exact bounded bytes decoded
+for the transform. The output fields describe the exact encoded bytes passed to the atomic writer.
+No successful summary is emitted before that writer returns success; failed writes therefore cannot
+be reported as successful evidence.
 
 
 ## Normalize Contract
@@ -219,18 +246,20 @@ digest, or approval authority. Its palette fields validate exact candidate paint
 merge similar source colors, and their length is not a requested output color count. Numeric
 generation controls may tighten embedded limits only.
 
-`perfectpixel vector` is the only SVG generation command. It requires one PNG/JPG/JPEG/WebP input and
-`--out <output.svg>`; optional reports are JSON. `perfectpixel vector-analyze` accepts exactly one
+`perfectpixel vector` is the sole raster-to-SVG quality-gated publication command. It requires one
+PNG/JPG/JPEG/WebP input and `--out <output.svg>`; optional reports are JSON. `motion-build` may
+publish derived `animated.svg` from an accepted raster-free SVG source, but it is not a raster-to-SVG
+generator and does not grant vector publication authority. `perfectpixel vector-analyze` accepts exactly one
 raster input and only `--preset`, `--profile`, `--policy`, and `--report`. It cannot accept output,
 detail, quality, path-limit, or diagnostics options, and cannot create SVG or diagnostics. No old
 vector command or API aliases, wrappers, redirects, compatibility modules, or feature flags exist.
 
 The profile keys are `compact` → `perfectpixel.svg-editable/1` and
 `motion-structure-ready` → `perfectpixel.svg-motion-structure/1`. Generation validates extensions
-and collisions, decodes within bounded limits, profiles content, normalizes request intent, resolves
-an embedded route, emits raster-free candidate bytes, validates shared bounded SVG IR, renders back,
-then applies all foundation and route gates. SVG containing image elements, image filters, data-image
-payloads, or base64 raster content is rejected.
+and collisions, captures one bounded source-file snapshot, decodes only those snapshot bytes, profiles
+content, normalizes request intent, resolves an embedded route, emits raster-free candidate bytes,
+validates shared bounded SVG IR, renders back, then applies all foundation and route gates. SVG
+containing image elements, image filters, data-image payloads, or base64 raster content is rejected.
 
 The embedded authority is immutable at runtime and verifies the route registry, foundation,
 threshold-bundle, profile, policy, and report identities. Foundation thresholds are universal and
@@ -253,8 +282,11 @@ is the embedded report-schema digest
 The report and diagnostic artifacts are immutable evidence, not publication authority. CLI transaction
 truth is authoritative: only `VectorOutcome::Approved` atomically writes the requested SVG; a
 rejection writes no final SVG and never exposes candidate bytes in the result or report. Explicitly
-requested diagnostics may persist candidate evidence as non-publishing artifacts. Their directory is
-an exact managed **file set** published through the same OS lock, journal
+requested diagnostics may persist candidate evidence as non-publishing artifacts. Before each requested
+report, diagnostics directory, or final SVG write, the CLI rechecks the captured source's canonical
+path, filesystem revision, byte count, and SHA-256; a mismatch fails that transaction phase closed.
+The report's semantic `inputDigest` remains the digest of the decoded RGBA raster, not the raw source
+file bytes. Their directory is an exact managed **file set** published through the same OS lock, journal
 `perfectpixel.artifact-set-transaction/2`, rollback, and crash-recovery implementation as generated
 workflows. Files absent from the next diagnostic set and empty parents created solely by removed
 snapshot-owned files are removed transactionally. A zero-file diagnostic set still executes
