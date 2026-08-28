@@ -68,6 +68,8 @@ fn vector_schema_help_and_option_vocabulary_are_exact() {
             "inspect",
             "convert",
             "upscale",
+            "edit",
+            "chroma-plan",
             "vector",
             "vector-analyze",
             "normalize",
@@ -134,7 +136,7 @@ fn vector_schema_help_and_option_vocabulary_are_exact() {
     assert_eq!(bare_help.status.code(), Some(2));
     assert_eq!(
         json(&bare_help)["message"],
-        "invalid option: unknown command 'help'; use schema, inspect, convert, upscale, vector, vector-analyze, normalize, bundle, motion-scaffold, or motion-build"
+        "invalid option: unknown command 'help'; use schema, inspect, convert, upscale, edit, chroma-plan, vector, vector-analyze, normalize, bundle, motion-scaffold, or motion-build"
     );
 }
 

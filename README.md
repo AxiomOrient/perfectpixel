@@ -17,9 +17,11 @@ also requires the formatting, Clippy, and documentation-contract checks listed b
 
 | Capability | Input | Result | Boundary |
 | --- | --- | --- | --- |
-| `inspect` | PNG, JPG, JPEG, or WebP | Raster facts as JSON | Inspection only; writes nothing. |
+| `inspect` | PNG, JPG, JPEG, or WebP | Versioned raster facts, input SHA-256, alpha/color facts, and a bounded edge palette as JSON | Numeric inspection only; writes nothing and does not expose pixels to a model. |
 | `convert` | PNG, JPG, JPEG, or WebP | PNG, JPEG, or lossless WebP | JPEG transparency requires an explicit background color. |
 | `upscale` | PNG, JPG, JPEG, or WebP | PNG, JPEG, or lossless WebP | Independent interpolation resize; defaults to pixel-safe nearest neighbor. |
+| `edit` | Strict JSON request and one raster | Atomically published RGBA PNG plus strict evidence | Sequential crop, quarter-turn rotate, flip, nearest/Lanczos3 resize, explicit edge-connected background removal, and controlled auto-key removal for flat/chroma edges. |
+| `chroma-plan` | Strict JSON request with 1–32 subject RGB colors | Versioned candidate palette and OKLab maximin evidence | Fixed high-saturation palette with deterministic RGB tie-break; no semantic segmentation or photo matting. |
 | `normalize` | JSON request and raster frames or a strip | Quality report and, on success, bundle-ready frames/request | Source paths are request-relative. |
 | `bundle` | Sprite request and frame images | PerfectPixel v3 manifest, atlas pages, Aseprite JSON, copied frames | Manages only files declared by the bundle manifest. |
 | `vector` | One raster and an SVG destination | An SVG only after an approved evaluation | `vector` is the only SVG publication command. |
@@ -57,7 +59,13 @@ perfectpixel inspect art/input.png
 perfectpixel convert art/input.png --out art/output.webp --width 1024 --filter lanczos3
 perfectpixel upscale sprites/idle.png --out sprites/idle@2x.png --scale 2
 
-# 3. Normalize generated sprite frames, then build the generated request.
+# 3. Apply deterministic post-generation edits (no semantic AI claims).
+perfectpixel edit --request image-edit-request.json
+
+# 4. Plan a controlled chroma key when the subject colors are known.
+perfectpixel chroma-plan --request chroma-plan-request.json
+
+# 5. Normalize generated sprite frames, then build the generated request.
 perfectpixel normalize --request normalize-request.json --out-dir normalized
 perfectpixel bundle --request normalized/sprite-request.json --out-dir bundle
 

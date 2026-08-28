@@ -24,8 +24,11 @@ pub use adapters::sprite::{
 #[doc(hidden)]
 pub use core::sha256::{is_sha256_hex, sha256, sha256_hex};
 pub use core::{
-    content_bbox, inspect_raster, resize_raster, FrameRect, Point, PpError, PpResult, Raster,
-    RasterInspection, ResampleFilter, Size, SvgContract, SvgReport,
+    apply_raster_edits, apply_raster_edits_with_evidence, content_bbox, inspect_raster,
+    oklab_distance, plan_chroma, plan_remove_background_auto, resize_raster, AutoBackgroundPlan,
+    ChromaCandidateScore, ChromaPlan, EdgePaletteEntry, FrameRect, Point, PpError, PpResult,
+    Raster, RasterEdit, RasterInspection, ResampleFilter, Size, SvgContract, SvgReport,
+    CHROMA_CANDIDATE_PALETTE, CHROMA_PLAN_METRIC, CHROMA_PLAN_SCHEMA,
 };
 #[doc(hidden)]
 pub use io::{

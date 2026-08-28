@@ -84,6 +84,13 @@ No README, filename convention, directory scan, or stale output may override the
 authorities. Legacy generated files are adopted only when the authority file is absent
 and a recognized control artifact proves the complete workflow generation.
 
+The `edit` and `chroma-plan` commands are intentionally one-invocation pure raster boundaries:
+`chroma-plan` only returns a fixed-palette OKLab decision, while `edit` stages one PNG through
+`AtomicFileWriter` after its bounded transforms succeed. `remove_background_auto` computes a
+complete edge histogram and an integer coverage proof before reusing the existing four-connected
+keyed flood; it is controlled chroma/checker/flat-edge cleanup, not semantic segmentation or
+matting, and heterogeneous photographic edges fail closed when the requested coverage is unmet.
+
 ## Generated workflow
 
 The four generated-output commands share one pipeline:

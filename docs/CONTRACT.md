@@ -13,6 +13,8 @@ perfectpixel schema
 perfectpixel inspect <input.png|jpg|jpeg|webp>
 perfectpixel convert <input.png|jpg|jpeg|webp> --out <output.png|jpg|jpeg|webp> [--width <positive integer>] [--height <positive integer>] [--filter nearest|lanczos3] [--jpeg-quality <1..100>] [--background <#RRGGBB>]
 perfectpixel upscale <input.png|jpg|jpeg|webp> --out <output.png|jpg|jpeg|webp> --scale <integer >=2> [--filter nearest|lanczos3] [--jpeg-quality <1..100>] [--background <#RRGGBB>]
+perfectpixel edit --request <edit-request.json>
+perfectpixel chroma-plan --request <chroma-plan-request.json>
 perfectpixel normalize --request <normalize-request.json> --out-dir <dir>
 perfectpixel bundle --request <sprite-request.json> --out-dir <dir>
 perfectpixel vector <input.png|jpg|jpeg|webp> --out <output.svg> [--preset auto|pixel-art|legacy-lossless|flat-icon|line-art|bounded-illustration] [--profile compact|motion-structure-ready] [--detail auto|1|2|3|4|5] [--min-quality <0..1>] [--max-quality-loss <0..1>] [--max-paths <positive integer>] [--policy <vector-policy.json>] [--report <evaluation.json>] [--diagnostics <dir>]
@@ -48,6 +50,88 @@ rename preserves the previous destination; if parent-directory synchronization f
 the command returns an explicit I/O error stating that the replacement may already be visible. A
 failure to confirm directory durability is never converted to success. The asset adapter does not
 silently select lossy WebP, AI upscaling, or a generic SVG conversion route.
+
+## Image Edit Pipeline Contract
+
+`edit` is the stable local post-generation edit boundary. It reads one strict JSON request,
+applies a sequential bounded list of pure raster transforms, and atomically publishes one
+PNG. The request schema is `perfectpixel.image-edit/1` and rejects unknown fields:
+
+```json
+{
+  "schemaVersion": 1,
+  "operation": "edit",
+  "input": "source.png",
+  "output": "edited.png",
+  "steps": [
+    {"op": "crop", "x": 0, "y": 0, "width": 512, "height": 512},
+    {"op": "rotate", "quarterTurns": 1},
+    {"op": "flip", "axis": "horizontal"},
+    {"op": "resize", "width": 256, "height": 256, "filter": "lanczos3"},
+    {"op": "remove_background", "keys": [[255, 0, 255]], "tolerance": 8, "feather": 4},
+    {"op": "remove_background_auto", "maxKeys": 2, "minEdgeCoverageBasisPoints": 9500, "tolerance": 8, "feather": 4}
+  ]
+}
+```
+
+`input` accepts PNG/JPG/JPEG/WebP and is resolved relative to the request file when it is not
+absolute. `output` must be a PNG and must not collide with the request or input. There must be
+1..=64 steps. Crop rectangles must be positive and contained in the current raster; rotation
+accepts clockwise quarter-turns 1, 2, or 3; flip accepts `horizontal` or `vertical`; resize
+requires positive dimensions and `nearest` or `lanczos3`. `remove_background` requires 1..=16
+unique RGB keys and byte-valued `tolerance` and `feather`. It performs a four-connected flood
+from unique canvas-edge pixels. A pixel is reachable only when its minimum Chebyshev RGB distance
+to a key is at most `tolerance + feather`; therefore a matching color isolated inside the subject
+is preserved. RGB bytes never change. For original alpha `a`, distance `d`, tolerance `t`, and
+feather `f`, output alpha is `0` when `d <= t`, is `a` when `f = 0` or `d >= t + f`, and otherwise
+is round-half-up `((a * (d - t)) + floor(f / 2)) / f`. Work is charged as
+`pixels * key_count + output_pixels` toward the same cumulative bound. Every intermediate raster
+remains within the normal 8192-per-side and 8192²-pixel decode bounds.
+
+`remove_background_auto` is the controlled variant for checkerboard, flat, or chroma-key-like
+edges. It requires `maxKeys` from 1 through 16, integer `minEdgeCoverageBasisPoints` from 1
+through 10000, and the same byte-valued `tolerance` and `feather`. It orders the complete edge
+palette by count descending then RGB lexicographic order, selects at most `maxKeys`, and invokes
+the exact four-connected keyed removal only when the selected colors' floor coverage in basis
+points meets the requested threshold. A coverage failure is explicit and happens before the
+output is published; the prior destination remains unchanged. This is intentionally fail-closed
+for heterogeneous photographic edges when their dominant colors cannot meet the threshold. It is
+not semantic segmentation, matting, inpainting, outpainting, masking, layering, or generative
+color intelligence.
+
+Success emits one strict JSON evidence object with schema, paths, dimensions, ordered operation
+names, and output SHA-256. When an auto step runs, `autoBackground` additionally records its
+bounded `selectedKeys` and integer `edgeCoverageBasisPoints` in execution order. The output bytes
+are committed through the same-directory atomic writer only after parsing, input snapshot, and all
+pure transforms succeed. Failure before the rename leaves an existing destination unchanged.
+
+## Chroma Plan Contract
+
+`chroma-plan` reads a strict request with schema `perfectpixel.chroma-plan/1`:
+
+```json
+{
+  "schemaVersion": 1,
+  "operation": "chroma_plan",
+  "subjectRgbColors": [[255, 255, 255], [32, 32, 32]]
+}
+```
+
+`subjectRgbColors` must contain 1..=32 unique RGB triplets. The command compares every input
+color with the fixed eight-color high-saturation candidate palette using explicit sRGB-to-linear
+conversion followed by standard OKLab Euclidean distance. Each candidate's score is its minimum
+distance to a subject color; the candidate maximizing that score wins, with exact ties resolved
+by RGB lexicographic order. The strict response includes the selected RGB and `#RRGGBB` value,
+the metric/version, its `minDistance`, and all bounded candidate scores. This plan is a controlled
+chroma aid for subsequent keyed edits; it does not inspect semantics or claim arbitrary-photo
+background removal.
+
+`inspect` emits strict `perfectpixel.inspect/1` evidence with `schemaVersion: 1`, the SHA-256 of
+the exact bounded input bytes, dimensions/content geometry, `hasAlpha`, decoded `pixelFormat:
+"rgba8"`, `colorSpace: "srgb"`, and `edgePixelCount`. `edgePalette` contains at most 16 unique
+RGB entries sampled from the canvas perimeter (corners counted once), ordered by descending count
+then lexicographic RGB. It is deterministic numeric metadata intended to help an agent choose
+explicit background keys; it does not transmit image pixels or provide semantic vision.
 
 
 ## Normalize Contract

@@ -70,7 +70,10 @@ fn removed_commands_are_unknown_and_never_redirect_or_dispatch() {
             diagnostics.to_str().unwrap(),
         ]);
         assert_eq!(output.status.code(), Some(2));
-        assert_eq!(error(&output)["message"], format!("invalid option: unknown command '{command}'; use schema, inspect, convert, upscale, vector, vector-analyze, normalize, bundle, motion-scaffold, or motion-build"));
+        assert_eq!(
+            error(&output)["message"],
+            format!("invalid option: unknown command '{command}'; use schema, inspect, convert, upscale, edit, chroma-plan, vector, vector-analyze, normalize, bundle, motion-scaffold, or motion-build")
+        );
         assert!(
             !out.exists() && !report.exists() && !diagnostics.exists(),
             "removed command must not dispatch"
