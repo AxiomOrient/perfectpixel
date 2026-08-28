@@ -1,6 +1,6 @@
 # Vector Profile and Scope Contract
 
-Status: Current normative profile and support contract for the 0.2.0 vector runtime.
+Status: Current normative profile and support contract for the 0.3.0 vector runtime.
 
 Normative: Yes — profile evidence, uncertainty, preset selection, and route availability.
 

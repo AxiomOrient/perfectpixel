@@ -1,6 +1,6 @@
 # Vector Evaluation and Analysis Report Schemas
 
-Status: Current normative report contract for the 0.2.0 vector runtime.
+Status: Current normative report contract for the 0.3.0 vector runtime.
 
 Normative: Yes — REPORT-001, grounded in the approved Vector/SVG Transition Roadmap.
 

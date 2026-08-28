@@ -1,12 +1,12 @@
 # Vector/SVG Authority
 
-Status: Current authority guide for the 0.2.0 vector runtime.
+Status: Current authority guide for the 0.3.0 vector runtime.
 
 Normative: Yes — lifecycle and authority vocabulary grounded in `docs/CONTRACT.md`.
 
 Implemented: Yes. The breaking API/CLI transition and compact route promotions are active.
 
-> **Status: current authority, 0.2.0.** This document describes the implemented vector transition. The normative public contract is [../CONTRACT.md](../CONTRACT.md); this document records its authority vocabulary and lifecycle.
+> **Status: current authority, 0.3.0.** This document describes the implemented vector transition. The normative public contract is [../CONTRACT.md](../CONTRACT.md); this document records its authority vocabulary and lifecycle.
 
 ## Public surface
 
@@ -14,9 +14,11 @@ Implemented: Yes. The breaking API/CLI transition and compact route promotions a
 `run(&Raster, &VectorRequest)` returns `VectorOutcome::{Approved, Rejected}`; and
 `analyze(&Raster, &VectorAnalysisRequest)` returns deterministic candidate-free evidence.
 
-`perfectpixel vector` is the sole SVG publication command. `perfectpixel vector-analyze` is analysis-only:
-it cannot generate SVG, diagnostics, or a publication transaction. There are no old command or API
-aliases, redirects, deprecated wrappers, compatibility modules, or feature flags.
+`perfectpixel vector` is the sole raster-to-SVG quality-gated publication command.
+`perfectpixel vector-analyze` is analysis-only: it cannot generate SVG, diagnostics, or a publication
+transaction. `motion-build` may publish derived `animated.svg` from an accepted raster-free SVG
+source; it is not raster-to-SVG generation. There are no old command or API aliases, redirects,
+deprecated wrappers, compatibility modules, or feature flags.
 
 Related contracts:
 

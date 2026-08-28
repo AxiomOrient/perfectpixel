@@ -218,7 +218,7 @@ fn schema_advertises_versioned_edit_contract() {
             "remove_background_auto"
         ])
     );
-    assert_eq!(schema["inspectSchema"], "perfectpixel.inspect/1");
+    assert_eq!(schema["inspectSchema"], "perfectpixel.asset-inspection/1");
     assert_eq!(schema["editCommand"]["semanticEditing"], false);
 }
 
@@ -416,7 +416,7 @@ fn inspect_response_is_versioned_content_addressed_and_agent_readable() {
         .expect("inspect");
     assert!(result.status.success());
     let evidence: serde_json::Value = serde_json::from_slice(&result.stdout).expect("inspection");
-    assert_eq!(evidence["schema"], "perfectpixel.inspect/1");
+    assert_eq!(evidence["schema"], "perfectpixel.asset-inspection/1");
     assert_eq!(evidence["schemaVersion"], 1);
     assert_eq!(evidence["inputSha256"], perfectpixel::sha256_hex(&encoded));
     assert_eq!(evidence["hasAlpha"], false);

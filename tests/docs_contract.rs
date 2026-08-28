@@ -4,8 +4,8 @@
 //! documented behavior has a behavioral test. What it cannot prove is that the prose stays
 //! attached to reality: that documentation links resolve, and that every command the binary
 //! actually dispatches is still tracked in the capability matrix. Those two properties used
-//! to be enforced by an external Python script; keeping them here means the whole project is
-//! verified by `cargo test` alone, with no second toolchain.
+//! to be enforced by an external Python script; keeping them here means the complete Cargo gate
+//! has no second toolchain.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -29,7 +29,7 @@ fn markdown_files(directory: &Path, found: &mut Vec<PathBuf>) {
 
 fn all_markdown() -> Vec<PathBuf> {
     let root = repo_root();
-    let mut found = vec![root.join("README.md")];
+    let mut found = vec![root.join("README.md"), root.join("THIRD_PARTY_NOTICES.md")];
     markdown_files(&root.join("docs"), &mut found);
     found.sort();
     found
@@ -85,6 +85,27 @@ fn every_local_documentation_link_resolves() {
         "documentation links must resolve to existing paths:\n  {}",
         broken.join("\n  ")
     );
+}
+
+#[test]
+fn readme_documents_the_complete_verification_gate() {
+    let readme = fs::read_to_string(repo_root().join("README.md")).expect("readable README");
+
+    assert!(
+        !readme.contains("`cargo test` is the complete verification gate"),
+        "README must not repeat the stale claim: `cargo test` is the complete verification gate"
+    );
+
+    for command in [
+        "cargo fmt --all -- --check",
+        "cargo clippy --locked --workspace --all-targets --all-features -- -D warnings",
+        "cargo test --locked --workspace --all-targets --all-features",
+    ] {
+        assert!(
+            readme.contains(command),
+            "README must list the complete verification gate command: {command}"
+        );
+    }
 }
 
 /// The set of commands the binary actually dispatches, read from its `match` arms.

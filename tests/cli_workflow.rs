@@ -51,6 +51,34 @@ fn assert_success(output: &Output) -> serde_json::Value {
 }
 
 #[test]
+fn cli_schema_and_help_define_the_deterministic_asset_compiler_boundary() {
+    let schema = assert_success(&run(&["schema"]));
+    assert_eq!(schema["role"], "deterministic-asset-compiler");
+    assert_eq!(schema["modelInference"], false);
+    assert_eq!(schema["networkRequired"], false);
+    assert_eq!(schema["publicationPolicy"], "evaluate-before-publish");
+    assert_eq!(
+        schema["assetAdapter"]["inspectionSchema"],
+        "perfectpixel.asset-inspection/1"
+    );
+    assert_eq!(
+        schema["assetAdapter"]["transformSchema"],
+        "perfectpixel.asset-transform/1"
+    );
+    assert_eq!(
+        schema["assetAdapter"]["digestEncoding"],
+        "sha256-lowercase-hex"
+    );
+
+    let help = String::from_utf8(run(&["--help"]).stdout).expect("UTF-8 help output");
+    assert!(help.contains("deterministic asset compiler"));
+    assert!(help.contains("AI-generated or authored local assets"));
+    assert!(help.contains("does not generate images or run AI models"));
+    assert!(help.contains("No network is required"));
+    assert!(help.contains("evaluated before atomic publication"));
+}
+
+#[test]
 fn cli_runs_schema_inspect_normalize_bundle_vector_and_invalid_request_paths() {
     let root = TempDir::new("workflow");
     let input = root.path().join("input.png");

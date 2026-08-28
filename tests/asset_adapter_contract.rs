@@ -6,7 +6,38 @@ use std::{
 };
 
 use image::ImageReader;
-use perfectpixel::{PngEncoder, Raster};
+use perfectpixel::{sha256_hex, PngEncoder, Raster};
+
+#[test]
+fn inspect_reports_exact_input_evidence() {
+    let root = temp_case("inspect-evidence");
+    let input = root.join("input.png");
+    write_png(&input, Raster::blank(2, 3).unwrap());
+
+    let result = run(&["inspect", input.to_str().unwrap()]);
+    assert_success(&result);
+    let summary: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    let input_bytes = fs::read(&input).unwrap();
+    assert_eq!(summary["schema"], "perfectpixel.asset-inspection/1");
+    assert_eq!(summary["ok"], true);
+    assert_eq!(summary["input"], input.to_string_lossy().as_ref());
+    assert_eq!(summary["inputSha256"], sha256_hex(&input_bytes));
+    assert_eq!(summary["inputByteCount"], input_bytes.len());
+    assert_eq!(summary["width"], 2);
+    assert_eq!(summary["height"], 3);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn schema_lists_the_complete_raster_adapter_command_set() {
+    let result = run(&["schema"]);
+    assert_success(&result);
+    let schema: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(
+        schema["assetAdapter"]["commands"],
+        serde_json::json!(["inspect", "convert", "upscale"])
+    );
+}
 
 #[test]
 fn convert_writes_lossless_webp_and_accepts_it_as_a_raster_input() {
@@ -30,8 +61,16 @@ fn convert_writes_lossless_webp_and_accepts_it_as_a_raster_input() {
         "nearest",
     ]);
     assert_success(&converted);
-    assert!(String::from_utf8_lossy(&converted.stdout).contains("webp-lossless"));
+    let summary: serde_json::Value = serde_json::from_slice(&converted.stdout).unwrap();
+    let input_bytes = fs::read(&input).unwrap();
+    assert_eq!(summary["schema"], "perfectpixel.asset-transform/1");
+    assert_eq!(summary["inputSha256"], sha256_hex(&input_bytes));
+    assert_eq!(summary["inputByteCount"], input_bytes.len());
     let decoded = decode_rgba(&webp);
+    let output_bytes = fs::read(&webp).unwrap();
+    assert_eq!(summary["outputSha256"], sha256_hex(&output_bytes));
+    assert_eq!(summary["outputByteCount"], output_bytes.len());
+    assert_eq!(summary["format"], "webp-lossless");
     assert_eq!((decoded.width(), decoded.height()), (4, 2));
     assert_eq!(decoded.as_raw()[3], 255);
     assert_eq!(decoded.as_raw()[7], 255);
@@ -100,6 +139,13 @@ fn upscale_defaults_to_exact_nearest_neighbor_pixels() {
     ]);
     assert_success(&result);
     let summary: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    let input_bytes = fs::read(&input).unwrap();
+    let output_bytes = fs::read(&output).unwrap();
+    assert_eq!(summary["schema"], "perfectpixel.asset-transform/1");
+    assert_eq!(summary["inputSha256"], sha256_hex(&input_bytes));
+    assert_eq!(summary["inputByteCount"], input_bytes.len());
+    assert_eq!(summary["outputSha256"], sha256_hex(&output_bytes));
+    assert_eq!(summary["outputByteCount"], output_bytes.len());
     assert_eq!(summary["filter"], "nearest");
     let decoded = decode_rgba(&output);
     assert_eq!(
@@ -108,6 +154,35 @@ fn upscale_defaults_to_exact_nearest_neighbor_pixels() {
             1, 2, 3, 255, 1, 2, 3, 255, 4, 5, 6, 255, 4, 5, 6, 255, 1, 2, 3, 255, 1, 2, 3, 255, 4,
             5, 6, 255, 4, 5, 6, 255,
         ]
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn transform_writer_failure_emits_no_success_digest_evidence_or_output() {
+    let root = temp_case("transform-writer-failure");
+    let input = root.join("input.png");
+    let blocked_parent = root.join("blocked-parent");
+    let output = blocked_parent.join("output.png");
+    write_png(&input, Raster::blank(1, 1).unwrap());
+    fs::write(&blocked_parent, b"preserve this blocking file").unwrap();
+
+    let result = run(&[
+        "convert",
+        input.to_str().unwrap(),
+        "--out",
+        output.to_str().unwrap(),
+    ]);
+
+    assert_eq!(result.status.code(), Some(2));
+    let payload: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(payload["ok"], false);
+    assert!(payload.get("outputSha256").is_none());
+    assert!(payload.get("outputByteCount").is_none());
+    assert!(!output.exists());
+    assert_eq!(
+        fs::read(&blocked_parent).unwrap(),
+        b"preserve this blocking file"
     );
     fs::remove_dir_all(root).unwrap();
 }
