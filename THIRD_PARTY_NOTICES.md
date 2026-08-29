@@ -20,10 +20,13 @@ package's upstream metadata for that complete resolved graph.
 | `image` | `0.25` | `0.25.10` | `MIT OR Apache-2.0` |
 | `serde` | `1` | `1.0.228` | `MIT OR Apache-2.0` |
 | `serde_json` | `1` | `1.0.150` | `MIT OR Apache-2.0` |
+| `schemars` | `1` | `1.2.2` | `MIT OR Apache-2.0` |
 | `svgtypes` | `=0.16.1` | `0.16.1` | `Apache-2.0 OR MIT` |
 | `thiserror` | `1` | `1.0.69` | `MIT OR Apache-2.0` |
 | `resvg` | `0.47` | `0.47.0` | `Apache-2.0 OR MIT` |
 | `roxmltree` | `=0.21.1` | `0.21.1` | `MIT OR Apache-2.0` |
+| `rmcp` | `=3.1.4` | `3.1.4` | `Apache-2.0` |
+| `tokio` | `1` | `1.53.1` | `MIT OR Apache-2.0` |
 
 The feature selections and `default-features` settings remain exactly those in
 `Cargo.toml`; this table does not imply any additional features. A bare version

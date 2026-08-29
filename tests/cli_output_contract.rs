@@ -7,10 +7,8 @@ use std::{
 
 use perfectpixel::{PngEncoder, Raster};
 
-#[cfg(unix)]
 use std::os::unix::fs::symlink;
 
-#[cfg(unix)]
 #[test]
 fn bundle_rejects_a_symlinked_out_dir_without_writing_through_it() {
     let root = temp_case("bundle-symlink-out-dir");
@@ -37,7 +35,6 @@ fn bundle_rejects_a_symlinked_out_dir_without_writing_through_it() {
     assert!(fs::read_dir(&real_out).unwrap().next().is_none());
 }
 
-#[cfg(unix)]
 #[test]
 fn normalize_rejects_a_symlinked_out_dir_without_writing_through_it() {
     let root = temp_case("normalize-symlink-out-dir");

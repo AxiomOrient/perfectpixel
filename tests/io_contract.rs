@@ -4,7 +4,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use perfectpixel::{AtomicDirectoryEntry, AtomicDirectoryWriter, AtomicFileWriter, PpError};
 
-#[cfg(unix)]
 use std::os::unix::fs::symlink;
 
 const HELLO_SHA256: [u8; 32] = [
@@ -35,7 +34,6 @@ fn atomic_writer_does_not_overwrite_neighbor_temp_files() {
     let _ = fs::remove_dir_all(dir);
 }
 
-#[cfg(unix)]
 #[test]
 fn atomic_file_writer_rejects_a_symlinked_destination_parent() {
     let dir = unique_temp_dir("perfectpixel-atomic-symlink-parent");
@@ -97,7 +95,6 @@ fn atomic_directory_zero_file_set_creates_an_empty_target() {
     let _ = fs::remove_dir_all(dir);
 }
 
-#[cfg(unix)]
 #[test]
 fn atomic_directory_rejects_a_symlinked_parent_before_rename() {
     let dir = unique_temp_dir("perfectpixel-directory-symlink-parent");

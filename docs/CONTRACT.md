@@ -6,6 +6,12 @@ This document defines the public behavior of the local Rust CLI. Where it and th
 disagree, the code and its tests win — see the [Verification Contract](#verification-contract)
 for the gate that keeps them together.
 
+## Platform Contract
+
+`perfectpixel` is Rust `cfg(unix)` only. The crate emits a compile-time error for `not(unix)`, so
+Windows and every other non-Unix target fail compilation; no non-Unix runtime contract exists. The
+complete fmt, clippy, test, and runtime gate is verified on macOS arm64.
+
 ## Product Boundary
 
 `perfectpixel schema` identifies the CLI with `role: "deterministic-asset-compiler"`.
@@ -19,6 +25,10 @@ The raster adapter advertises these stable evidence contracts under `assetAdapte
 - `inspectionSchema: "perfectpixel.asset-inspection/1"`;
 - `transformSchema: "perfectpixel.asset-transform/1"`; and
 - `digestEncoding: "sha256-lowercase-hex"`.
+
+The local `perfectpixel-mcp` binary is an adapter over this same application contract. It does
+not change any CLI command, stdout JSON, help text, or exit code. Its fixed-root typed stdio
+boundary is specified separately in [MCP_CONTRACT.md](MCP_CONTRACT.md).
 
 ## Public Commands
 
@@ -285,12 +295,12 @@ durably copy every backup into a separate restore tree, verify that entire resto
 the immutable backup tree again. Recovery then processes each touched path once. Any validation,
 restaging, restoration, or cleanup failure is surfaced; recovery evidence that remains visible is
 kept for retry, and a terminal installed transaction is cleaned idempotently if it reappears after a
-crash. Schema `/1` is not automatically upgraded or replayed because it contains no historical backup
-integrity evidence; it fails closed for explicit operator resolution.
+crash. Unsupported schema `/1` is not automatically upgraded or replayed because it contains no
+historical backup integrity evidence; it fails closed for explicit operator resolution.
 
-This transaction covers `normalize`, `bundle`, `motion-scaffold`, and `motion-build`. Legacy product
-ownership is imported only when no generation authority exists and a recognized control artifact
-proves the complete workflow generation.
+This transaction covers `normalize`, `bundle`, `motion-scaffold`, and `motion-build`. A root without
+`.perfectpixel-generation.json` does not auto-adopt existing generated outputs; use a clean output
+directory for first publication. There is no migration shim.
 
 The publisher serializes cooperating writers and recovers interrupted work. It does not promise
 generation-atomic visibility to readers that do not participate in that lock: such readers may
@@ -299,6 +309,10 @@ observe individual files while an installed set is being replaced.
 ## Atlas Manifest Contract
 
 `manifest.json` uses schema `perfectpixel.sprite/3`.
+
+The `sheets[]` array in `manifest.json` is the canonical source for atlas page dimensions and
+count. Bundle summaries expose the page count and manifest/files, without duplicating single-sheet
+dimension fields.
 
 It records:
 
@@ -401,6 +415,10 @@ Exit codes:
 - `4`: vector quality below the required score, unsupported continuous-tone vector content, or a
   normalize quality gate failure;
 - `1`: other failures.
+
+The MCP adapter preserves these application exit codes inside its `exitCode` field and sets its
+envelope `ok` flag from the code only. Root, path, busy, and internal adapter errors use the MCP
+contract's stable error envelope; they do not reinterpret an existing CLI result message.
 
 ## Verification Contract
 

@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::{PpError, PpResult, Raster};
 use image::{
     codecs::{
         jpeg::JpegEncoder as ImageJpegEncoder, png::PngEncoder as ImagePngEncoder,
@@ -7,7 +8,6 @@ use image::{
     },
     ExtendedColorType, ImageEncoder,
 };
-use perfectpixel::{PpError, PpResult, Raster};
 
 pub(super) const DEFAULT_JPEG_QUALITY: u8 = 85;
 

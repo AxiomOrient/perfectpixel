@@ -108,10 +108,57 @@ fn readme_documents_the_complete_verification_gate() {
     }
 }
 
+#[test]
+fn unix_only_compile_contract_and_documentation_are_consistent() {
+    const COMPILE_CONTRACT: &str =
+        "#[cfg(not(unix))]\ncompile_error!(\"perfectpixel supports Unix targets only\");";
+    const CORE_DOCUMENTS: &[&str] = &[
+        "README.md",
+        "docs/CONTRACT.md",
+        "docs/MCP_CONTRACT.md",
+        "docs/ARCHITECTURE.md",
+        "docs/README.md",
+    ];
+    const STALE_PLATFORM_PHRASES: &[&str] = &[
+        "windows compilation and runtime behavior are not verified",
+        "windows compilation, replacement semantics, and non-unix file-revision behavior",
+        "non-unix file-revision behavior require target-specific verification",
+        "non-unix targets require target-specific verification",
+        "windows verification remains",
+    ];
+
+    let lib = fs::read_to_string(repo_root().join("src/lib.rs")).expect("readable crate root");
+    assert!(
+        lib.starts_with(COMPILE_CONTRACT),
+        "src/lib.rs must begin with the exact non-Unix compile-error contract"
+    );
+    assert_eq!(
+        lib.matches(COMPILE_CONTRACT).count(),
+        1,
+        "src/lib.rs must contain the exact non-Unix compile-error contract once"
+    );
+
+    for document in CORE_DOCUMENTS {
+        let text = fs::read_to_string(repo_root().join(document))
+            .unwrap_or_else(|error| panic!("readable core document {document}: {error}"));
+        let normalized = text
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_ascii_lowercase();
+        for phrase in STALE_PLATFORM_PHRASES {
+            assert!(
+                !normalized.contains(phrase),
+                "{document} must not describe Windows/non-Unix support as pending verification: {phrase}"
+            );
+        }
+    }
+}
+
 /// The set of commands the binary actually dispatches, read from its `match` arms.
 fn dispatched_commands() -> BTreeSet<String> {
-    let source = fs::read_to_string(repo_root().join("src/bin/perfectpixel.rs"))
-        .expect("readable CLI source");
+    let source = fs::read_to_string(repo_root().join("src/application/mod.rs"))
+        .expect("readable application dispatch source");
     let dispatch_start = source
         .find("fn run(")
         .expect("CLI source defines the dispatch function");

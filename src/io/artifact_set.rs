@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use crate::{PpError, PpResult};
 
 // Schema /2 records path, byte count, and SHA-256 for every preexisting
-// touched file. Schema /1 cannot be upgraded automatically because its backup
-// bytes have no historical integrity evidence.
+// touched file. Unsupported schema /1 cannot be upgraded automatically because
+// its backup bytes have no historical integrity evidence.
 const JOURNAL_SCHEMA: &str = "perfectpixel.artifact-set-transaction/2";
 const PREPARED_MARKER: &str = "prepared.json";
 const BACKUPS_READY_MARKER: &str = "backups-ready.json";
@@ -24,7 +24,6 @@ const MAX_TRANSACTION_TREE_ENTRIES: usize = MAX_ARTIFACT_ENTRIES * (MAX_RELATIVE
 const MAX_JOURNAL_BYTES: usize = 1024 * 1024;
 const FILE_COMPARE_BUFFER_BYTES: usize = 64 * 1024;
 
-#[cfg(unix)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ArtifactFileRevision {
     device: u64,
@@ -36,14 +35,6 @@ struct ArtifactFileRevision {
     changed_nanoseconds: i64,
 }
 
-#[cfg(not(unix))]
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct ArtifactFileRevision {
-    byte_count: u64,
-    modified: Option<std::time::SystemTime>,
-}
-
-#[cfg(unix)]
 fn artifact_file_revision(metadata: &fs::Metadata) -> ArtifactFileRevision {
     use std::os::unix::fs::MetadataExt;
 
@@ -55,14 +46,6 @@ fn artifact_file_revision(metadata: &fs::Metadata) -> ArtifactFileRevision {
         modified_nanoseconds: metadata.mtime_nsec(),
         changed_seconds: metadata.ctime(),
         changed_nanoseconds: metadata.ctime_nsec(),
-    }
-}
-
-#[cfg(not(unix))]
-fn artifact_file_revision(metadata: &fs::Metadata) -> ArtifactFileRevision {
-    ArtifactFileRevision {
-        byte_count: metadata.len(),
-        modified: metadata.modified().ok(),
     }
 }
 
@@ -2929,7 +2912,6 @@ mod tests {
         cleanup_case(&root);
     }
 
-    #[cfg(unix)]
     #[test]
     fn planner_does_not_follow_symlink_output_root() {
         use std::os::unix::fs::symlink;
@@ -3301,20 +3283,20 @@ mod tests {
     }
 
     #[test]
-    fn journal_v1_requires_explicit_operator_resolution() {
+    fn unsupported_journal_v1_fails_closed() {
         let root = unique_temp_dir("artifact-set-v1-journal");
         fs::create_dir_all(&root).expect("root");
         let transaction_dir = create_transaction_dir(&root).expect("transaction");
         fs::create_dir(transaction_dir.join("stage")).expect("stage");
         fs::create_dir(transaction_dir.join("backup")).expect("backup");
         let root_name = root_file_name(&root).expect("root name");
-        let legacy = format!(
+        let unsupported = format!(
             "{{\n  \"schema\": \"perfectpixel.artifact-set-transaction/1\",\n  \"rootName\": \"{root_name}\",\n  \"rootExisted\": true,\n  \"writes\": [],\n  \"removals\": [],\n  \"preexisting\": []\n}}\n"
         );
-        fs::write(transaction_dir.join(PREPARED_MARKER), legacy).expect("legacy marker");
+        fs::write(transaction_dir.join(PREPARED_MARKER), unsupported).expect("unsupported marker");
 
         let error = AtomicArtifactSetWriter::publish(&root, &[], &[])
-            .expect_err("journal v1 lacks trusted backup evidence");
+            .expect_err("unsupported journal v1 lacks trusted backup evidence");
 
         assert!(error
             .to_string()

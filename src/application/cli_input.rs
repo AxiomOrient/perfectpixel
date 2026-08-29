@@ -3,7 +3,7 @@ use std::env;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use perfectpixel::{PpError, PpResult, SvgProfile, VectorPresetSelection};
+use crate::{PpError, PpResult, SvgProfile, VectorPresetSelection};
 
 pub(super) fn reject_extra_args(args: &[String], command: &str) -> PpResult<()> {
     if args.is_empty() {

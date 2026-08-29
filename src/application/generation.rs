@@ -3,6 +3,8 @@ use std::path::{Component, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+// This module contains pure application publication authority state.
+
 pub(super) const GENERATION_AUTHORITY_FILE: &str = ".perfectpixel-generation.json";
 pub(super) const GENERATION_AUTHORITY_SCHEMA: &str = "perfectpixel.generation-authority/1";
 // The generic artifact transaction admits 4,096 touched paths and 512 MiB of

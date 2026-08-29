@@ -3,38 +3,27 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use perfectpixel::{
+use crate::{
     reject_blocked_managed_parents, ArtifactSetConditionPhase, AtomicArtifactSetOwnedEntry,
-    AtomicArtifactSetOwnedPlan, Manifest, MotionCompiler, MotionLayersDocument, MotionReport,
-    MotionRequest, NormalizeReport, SpriteBundleRequest, MOTION_SCHEMA,
+    AtomicArtifactSetOwnedPlan,
 };
-use serde::de::DeserializeOwned;
-use serde_json::Value;
 
 use super::generation::{
     reduce_generation_authority, GenerationArtifact, GenerationAuthority, GenerationAuthorityEvent,
-    GenerationAuthorityState, GenerationRecord, GenerationTransition, GenerationWorkflow,
-    GENERATION_AUTHORITY_FILE, MAX_GENERATION_ARTIFACTS, MAX_GENERATION_BYTES,
+    GenerationAuthorityState, GenerationTransition, GenerationWorkflow, GENERATION_AUTHORITY_FILE,
+    MAX_GENERATION_ARTIFACTS, MAX_GENERATION_BYTES,
 };
-use super::{
-    aseprite_json_name, destination_error, managed_relative_path, reject_same_path, PpError,
-    PpResult, MAX_CONTROL_READ_BYTES,
-};
-use perfectpixel::sha256_hex;
+use super::{destination_error, managed_relative_path, reject_same_path, PpError, PpResult};
+use crate::sha256_hex;
 
 const MAX_AUTHORITY_BYTES: u64 = 1024 * 1024;
-const MAX_LEGACY_MOTION_ANIMATIONS: usize = 256;
 const MAX_INPUT_SNAPSHOTS: usize = MAX_GENERATION_ARTIFACTS + 1;
 const MAX_INPUT_SNAPSHOT_BYTES: u64 = 512 * 1024 * 1024;
-use perfectpixel::NORMALIZE_SCHEMA as NORMALIZE_REPORT_SCHEMA;
-const MOTION_LAYERS_SCHEMA: &str = "perfectpixel.motion-layers/1";
-use perfectpixel::MOTION_REPORT_SCHEMA;
 
 /// Filesystem revision captured from the same open file handle as the input
 /// bytes. Unix identity and change timestamps detect path replacement and
-/// in-place mutation; other platforms retain the strongest portable metadata
-/// available from `std` and always verify canonical path, length, and SHA-256.
-#[cfg(unix)]
+/// in-place mutation while the caller also verifies canonical path, length, and
+/// SHA-256.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SnapshotFileRevision {
     device: u64,
@@ -46,14 +35,6 @@ struct SnapshotFileRevision {
     changed_nanoseconds: i64,
 }
 
-#[cfg(not(unix))]
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct SnapshotFileRevision {
-    byte_count: u64,
-    modified: Option<std::time::SystemTime>,
-}
-
-#[cfg(unix)]
 fn snapshot_file_revision(metadata: &fs::Metadata) -> SnapshotFileRevision {
     use std::os::unix::fs::MetadataExt;
 
@@ -65,14 +46,6 @@ fn snapshot_file_revision(metadata: &fs::Metadata) -> SnapshotFileRevision {
         modified_nanoseconds: metadata.mtime_nsec(),
         changed_seconds: metadata.ctime(),
         changed_nanoseconds: metadata.ctime_nsec(),
-    }
-}
-
-#[cfg(not(unix))]
-fn snapshot_file_revision(metadata: &fs::Metadata) -> SnapshotFileRevision {
-    SnapshotFileRevision {
-        byte_count: metadata.len(),
-        modified: metadata.modified().ok(),
     }
 }
 
@@ -282,10 +255,7 @@ pub(super) fn plan_generation_publication(
 
     let current_artifacts = generation_artifacts_for(&artifacts)?;
     let (observed_state, authority_precondition) = read_generation_authority(root)?;
-    let state = match observed_state {
-        GenerationAuthorityState::Absent => seed_legacy_generation_authority(root)?,
-        published @ GenerationAuthorityState::Published(_) => published,
-    };
+    let state = observed_state;
     let event = GenerationAuthorityEvent::replace(workflow, current_artifacts.clone(), invalidates)
         .map_err(|message| generation_authority_error(root, message))?;
     let mut transition = reduce_generation_authority(state, event)
@@ -443,7 +413,7 @@ fn validate_generated_artifacts(artifacts: &[GeneratedArtifact]) -> PpResult<()>
     // Hashing is the expensive per-artifact work, so it runs in parallel; the
     // running-total/duplicate-path bookkeeping below stays sequential because it is
     // order-dependent (first-offender error selection, overflow-safe accumulation).
-    let records = perfectpixel::parallel_map(artifacts, |artifact| {
+    let records = crate::parallel_map(artifacts, |artifact| {
         let byte_count = u64::try_from(artifact.bytes.len()).map_err(|_| {
             PpError::InvalidRequest("generation artifact byte count overflow".to_string())
         })?;
@@ -812,423 +782,6 @@ fn verify_authority_precondition(
     }
 }
 
-/// Imports pre-authority output only when a product-owned control artifact has
-/// a recognized schema and the complete declared generation is present. This
-/// avoids taking ownership of coincidentally named files.
-fn seed_legacy_generation_authority(root: &Path) -> PpResult<GenerationAuthorityState> {
-    let records = [
-        legacy_normalize_record(root)?,
-        legacy_bundle_record(root)?,
-        legacy_motion_scaffold_record(root)?,
-        legacy_motion_build_record(root)?,
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>();
-
-    if records.is_empty() {
-        Ok(GenerationAuthorityState::Absent)
-    } else {
-        GenerationAuthority::new(records)
-            .map(GenerationAuthorityState::Published)
-            .map_err(|message| generation_authority_error(root, message))
-    }
-}
-
-fn legacy_normalize_record(root: &Path) -> PpResult<Option<GenerationRecord>> {
-    let report_path = root.join("normalize-report.json");
-    let Some(report) = read_optional_versioned_json::<NormalizeReport>(
-        &report_path,
-        NORMALIZE_REPORT_SCHEMA,
-        None,
-    )?
-    else {
-        return Ok(None);
-    };
-
-    let mut paths = BTreeSet::from(["normalize-report.json".to_string()]);
-    let request_path = root.join("sprite-request.json");
-    let request = read_optional_json_strict::<SpriteBundleRequest>(&request_path)?;
-    if report.ok && request.is_none() {
-        return Err(destination_error(
-            &request_path,
-            "legacy successful normalize generation is missing sprite-request.json",
-        ));
-    }
-    // A failed legacy normalize may still contain outputs from an earlier
-    // successful run. A valid request is strong provenance for those stale
-    // frames, so import the complete set and let the next event remove it.
-    if let Some(request) = request {
-        paths.insert("sprite-request.json".to_string());
-        for state in request.states {
-            paths.extend(state.frames);
-        }
-    }
-
-    required_generation_record(root, GenerationWorkflow::Normalize, paths).map(Some)
-}
-
-fn legacy_bundle_record(root: &Path) -> PpResult<Option<GenerationRecord>> {
-    let path = root.join("manifest.json");
-    let Some(manifest) = read_optional_versioned_json::<Manifest>(
-        &path,
-        perfectpixel::SPRITE_SCHEMA,
-        Some(("app", env!("CARGO_PKG_NAME"))),
-    )?
-    else {
-        return Ok(None);
-    };
-
-    let mut paths = BTreeSet::from(["manifest.json".to_string()]);
-    for sheet in manifest.sheets {
-        paths.insert(sheet.image.clone());
-        paths.insert(aseprite_json_name(&sheet.image));
-    }
-    for animation in manifest.animations.into_values() {
-        for item in animation.items {
-            paths.insert(item.output);
-        }
-    }
-    required_generation_record(root, GenerationWorkflow::Bundle, paths).map(Some)
-}
-
-fn legacy_motion_scaffold_record(root: &Path) -> PpResult<Option<GenerationRecord>> {
-    let layers_path = root.join("layers.json");
-    let Some(layers) = read_optional_versioned_json::<MotionLayersDocument>(
-        &layers_path,
-        MOTION_LAYERS_SCHEMA,
-        None,
-    )?
-    else {
-        return Ok(None);
-    };
-
-    let request_path = root.join("motion-request.json");
-    let Some(request) =
-        read_optional_versioned_json::<MotionRequest>(&request_path, MOTION_SCHEMA, None)?
-    else {
-        return Err(destination_error(
-            &request_path,
-            "legacy motion scaffold generation is missing a valid motion-request.json",
-        ));
-    };
-    if request.source_svg != "scene.svg" {
-        return Err(destination_error(
-            &request_path,
-            "legacy motion scaffold request must bind sourceSvg to scene.svg",
-        ));
-    }
-
-    let scene_path = root.join("scene.svg");
-    let Some(scene_svg) = read_optional_control_text(&scene_path)? else {
-        return Err(destination_error(
-            &scene_path,
-            "legacy motion scaffold generation is missing scene.svg",
-        ));
-    };
-    if MotionCompiler::scene_sha256(&scene_svg) != request.source_svg_sha256 {
-        return Err(destination_error(
-            &request_path,
-            "legacy motion scaffold request hash does not match scene.svg",
-        ));
-    }
-
-    let regenerated =
-        MotionCompiler::scaffold(&scene_svg).map_err(|source| PpError::InvalidRequestSource {
-            path: scene_path.clone(),
-            message: "legacy motion scaffold scene violates the scaffold contract".to_string(),
-            original_error: source.to_string(),
-        })?;
-    if regenerated.scene_svg != scene_svg {
-        return Err(destination_error(
-            &scene_path,
-            "legacy motion scaffold scene is not the canonical scaffold output",
-        ));
-    }
-    if regenerated.layers != layers {
-        return Err(destination_error(
-            &layers_path,
-            "legacy layers.json does not match the canonical scene scaffold",
-        ));
-    }
-
-    let inspector_path = root.join("layer-inspector.html");
-    let Some(inspector_html) = read_optional_control_text(&inspector_path)? else {
-        return Err(destination_error(
-            &inspector_path,
-            "legacy motion scaffold generation is missing layer-inspector.html",
-        ));
-    };
-    if regenerated.inspector_html != inspector_html {
-        return Err(destination_error(
-            &inspector_path,
-            "legacy layer-inspector.html does not match the canonical scene scaffold",
-        ));
-    }
-
-    required_generation_record(
-        root,
-        GenerationWorkflow::MotionScaffold,
-        [
-            "scene.svg".to_string(),
-            "layers.json".to_string(),
-            "motion-request.json".to_string(),
-            "layer-inspector.html".to_string(),
-        ]
-        .into_iter()
-        .collect(),
-    )
-    .map(Some)
-}
-
-fn legacy_motion_build_record(root: &Path) -> PpResult<Option<GenerationRecord>> {
-    let report_path = root.join("motion-report.json");
-    let Some(report) =
-        read_optional_versioned_json::<MotionReport>(&report_path, MOTION_REPORT_SCHEMA, None)?
-    else {
-        return Ok(None);
-    };
-    if !report.animated_svg
-        || !report.lottie_json
-        || !report.dotlottie_v2_layout
-        || report.dotlottie_archive_created
-    {
-        return Err(destination_error(
-            &report_path,
-            "legacy motion report does not describe the exploded perfectpixel motion output contract",
-        ));
-    }
-
-    let manifest_path = root.join("dotlottie/manifest.json");
-    let Some(manifest_text) = read_optional_control_text(&manifest_path)? else {
-        return Err(destination_error(
-            &manifest_path,
-            "legacy motion generation is missing dotlottie/manifest.json",
-        ));
-    };
-    let manifest: Value =
-        serde_json::from_str(&manifest_text).map_err(|source| PpError::InvalidRequestSource {
-            path: manifest_path.clone(),
-            message: "legacy dotLottie manifest is not valid JSON".to_string(),
-            original_error: source.to_string(),
-        })?;
-    let generated_by_perfectpixel = manifest
-        .get("generator")
-        .and_then(Value::as_str)
-        .is_some_and(|generator| generator.starts_with(perfectpixel::GENERATOR_PREFIX));
-    let animations = manifest.get("animations").and_then(Value::as_array);
-    let exact_animation_binding = animations.is_some_and(|animations| {
-        animations.len() == 1
-            && animations[0].get("id").and_then(Value::as_str) == Some(report.name.as_str())
-    });
-    if manifest.get("version").and_then(Value::as_str) != Some("2")
-        || !generated_by_perfectpixel
-        || manifest
-            .pointer("/initial/animation")
-            .and_then(Value::as_str)
-            != Some(report.name.as_str())
-        || !exact_animation_binding
-    {
-        return Err(destination_error(
-            &manifest_path,
-            "legacy dotLottie manifest does not bind exactly one perfectpixel animation to the motion report",
-        ));
-    }
-
-    let mut paths = BTreeSet::from([
-        "animated.svg".to_string(),
-        "animation.json".to_string(),
-        "motion-report.json".to_string(),
-        "preview.html".to_string(),
-        "dotlottie/manifest.json".to_string(),
-    ]);
-    let expected_animation = format!("dotlottie/a/{}.json", report.name);
-    let expected_animation_path = root.join(&expected_animation);
-    if !is_perfectpixel_lottie_animation(&expected_animation_path, &report.name)? {
-        return Err(destination_error(
-            &expected_animation_path,
-            "legacy dotLottie animation is not a perfectpixel animation matching the motion report",
-        ));
-    }
-    require_equal_legacy_files(
-        &root.join("animation.json"),
-        &expected_animation_path,
-        "legacy animation.json must exactly match its dotLottie animation",
-    )?;
-    paths.insert(expected_animation);
-    paths.extend(legacy_motion_animation_paths(root)?);
-    required_generation_record(root, GenerationWorkflow::MotionBuild, paths).map(Some)
-}
-
-fn require_equal_legacy_files(left: &Path, right: &Path, message: &str) -> PpResult<()> {
-    let read = |path: &Path| -> PpResult<Vec<u8>> {
-        let Some((bytes, _)) = capture_stable_managed_file(
-            path,
-            MAX_CONTROL_READ_BYTES as u64,
-            true,
-            "legacy generated artifact",
-        )?
-        else {
-            return Err(destination_error(
-                path,
-                "legacy generated artifact is missing",
-            ));
-        };
-        Ok(bytes)
-    };
-    if read(left)? != read(right)? {
-        return Err(destination_error(left, message));
-    }
-    Ok(())
-}
-
-fn legacy_motion_animation_paths(root: &Path) -> PpResult<BTreeSet<String>> {
-    let directory = root.join("dotlottie").join("a");
-    let metadata = match fs::symlink_metadata(&directory) {
-        Ok(metadata) => metadata,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeSet::new()),
-        Err(source) => {
-            return Err(PpError::FileIo {
-                path: directory,
-                message: source.to_string(),
-            });
-        }
-    };
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(destination_error(
-            &directory,
-            "legacy motion animation directory must be a real directory",
-        ));
-    }
-
-    let mut paths = BTreeSet::new();
-    for entry in fs::read_dir(&directory).map_err(|source| PpError::FileIo {
-        path: directory.clone(),
-        message: source.to_string(),
-    })? {
-        let entry = entry.map_err(|source| PpError::FileIo {
-            path: directory.clone(),
-            message: source.to_string(),
-        })?;
-        let file_name = entry.file_name();
-        let Some(file_name) = file_name.to_str() else {
-            continue;
-        };
-        let Some(expected_name) = file_name.strip_suffix(".json") else {
-            continue;
-        };
-        if expected_name.is_empty() {
-            continue;
-        }
-        let file_type = entry.file_type().map_err(|source| PpError::FileIo {
-            path: entry.path(),
-            message: source.to_string(),
-        })?;
-        if file_type.is_symlink() || !file_type.is_file() {
-            return Err(destination_error(
-                &entry.path(),
-                "legacy motion animation must be a regular non-symlink file",
-            ));
-        }
-        if !is_perfectpixel_lottie_animation(&entry.path(), expected_name)? {
-            continue;
-        }
-        if paths.len() >= MAX_LEGACY_MOTION_ANIMATIONS {
-            return Err(destination_error(
-                &directory,
-                "legacy motion animation directory has too many managed JSON files",
-            ));
-        }
-        paths.insert(format!("dotlottie/a/{file_name}"));
-    }
-    Ok(paths)
-}
-
-fn is_perfectpixel_lottie_animation(path: &Path, expected_name: &str) -> PpResult<bool> {
-    let Some((bytes, _)) = capture_stable_managed_file(
-        path,
-        MAX_CONTROL_READ_BYTES as u64,
-        true,
-        "legacy motion animation",
-    )?
-    else {
-        return Ok(false);
-    };
-    let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
-        return Ok(false);
-    };
-    let generated_by_perfectpixel = value
-        .pointer("/meta/g")
-        .and_then(Value::as_str)
-        .is_some_and(|generator| generator.starts_with(perfectpixel::GENERATOR_PREFIX));
-    Ok(generated_by_perfectpixel
-        && value.get("v").and_then(Value::as_str).is_some()
-        && value.get("nm").and_then(Value::as_str) == Some(expected_name)
-        && value.get("layers").and_then(Value::as_array).is_some()
-        && value.get("assets").and_then(Value::as_array).is_some())
-}
-
-fn required_generation_record(
-    root: &Path,
-    workflow: GenerationWorkflow,
-    paths: BTreeSet<String>,
-) -> PpResult<GenerationRecord> {
-    let artifacts = required_existing_generation_artifacts(root, paths)?;
-    GenerationRecord::new(workflow, artifacts)
-        .map_err(|message| generation_authority_error(root, message))
-}
-
-fn required_existing_generation_artifacts(
-    root: &Path,
-    paths: BTreeSet<String>,
-) -> PpResult<Vec<GenerationArtifact>> {
-    // BTreeSet iteration is already sorted, so collecting it keeps the exact order the
-    // sequential budget check below relies on. File read + hash is the expensive part and
-    // runs in parallel; running-total accumulation stays sequential (order-dependent overflow
-    // and budget checks).
-    let paths = paths.into_iter().collect::<Vec<_>>();
-    let snapshots = perfectpixel::parallel_map(&paths, |relative_path| {
-        let relative = managed_relative_path(relative_path)?;
-        let path = root.join(&relative);
-        let Some((_, snapshot)) = capture_stable_managed_file(
-            &path,
-            MAX_GENERATION_BYTES,
-            true,
-            "legacy generated artifact",
-        )?
-        else {
-            return Err(destination_error(
-                &path,
-                "recognized legacy generation is incomplete",
-            ));
-        };
-        Ok((path, snapshot))
-    })?;
-
-    let mut artifacts = Vec::with_capacity(paths.len());
-    let mut total_bytes = 0u64;
-    for (relative_path, (path, snapshot)) in paths.into_iter().zip(snapshots) {
-        total_bytes = total_bytes
-            .checked_add(snapshot.byte_count)
-            .ok_or_else(|| {
-                PpError::InvalidRequest("legacy generation byte count overflow".into())
-            })?;
-        if total_bytes > MAX_GENERATION_BYTES {
-            return Err(PpError::FileIo {
-                path,
-                message: format!(
-                    "legacy generated artifact set exceeds {MAX_GENERATION_BYTES}-byte limit"
-                ),
-            });
-        }
-        artifacts.push(
-            GenerationArtifact::new(relative_path, snapshot.sha256, snapshot.byte_count)
-                .map_err(PpError::InvalidRequest)?,
-        );
-    }
-    Ok(artifacts)
-}
-
 fn verify_generation_artifacts(
     root: &Path,
     artifacts: &[GenerationArtifact],
@@ -1248,7 +801,7 @@ fn verify_generation_artifacts(
     }
     let indexed = artifacts.iter().zip(running_totals).collect::<Vec<_>>();
 
-    perfectpixel::parallel_map(&indexed, |&(artifact, running_total)| {
+    crate::parallel_map(&indexed, |&(artifact, running_total)| {
         if artifact.byte_count > MAX_GENERATION_BYTES || running_total > MAX_GENERATION_BYTES {
             return Err(PpError::InvalidRequest(
                 "generation authority exceeds byte limit".to_string(),
@@ -1398,73 +951,6 @@ fn modified_generated_artifact_error(path: &Path) -> PpError {
         "managed generated artifact changed since authority was written; refusing to replace or remove it",
     )
 }
-
-/// A malformed or foreign control file is not provenance. Once the advertised
-/// schema/discriminator matches, deserialization failure is a product-contract
-/// violation and publication stops instead of guessing.
-fn read_optional_versioned_json<T: DeserializeOwned>(
-    path: &Path,
-    expected_schema: &str,
-    discriminator: Option<(&str, &str)>,
-) -> PpResult<Option<T>> {
-    let Some(text) = read_optional_control_text(path)? else {
-        return Ok(None);
-    };
-    let value: Value = match serde_json::from_str(&text) {
-        Ok(value) => value,
-        Err(_) => return Ok(None),
-    };
-    if value.get("schema").and_then(Value::as_str) != Some(expected_schema) {
-        return Ok(None);
-    }
-    if let Some((field, expected)) = discriminator {
-        if value.get(field).and_then(Value::as_str) != Some(expected) {
-            return Ok(None);
-        }
-    }
-    serde_json::from_value(value)
-        .map(Some)
-        .map_err(|source| PpError::InvalidRequestSource {
-            path: path.to_path_buf(),
-            message: format!(
-                "legacy control artifact claims schema '{expected_schema}' but violates its contract"
-            ),
-            original_error: source.to_string(),
-        })
-}
-
-fn read_optional_json_strict<T: DeserializeOwned>(path: &Path) -> PpResult<Option<T>> {
-    let Some(text) = read_optional_control_text(path)? else {
-        return Ok(None);
-    };
-    serde_json::from_str(&text)
-        .map(Some)
-        .map_err(|source| PpError::InvalidRequestSource {
-            path: path.to_path_buf(),
-            message: "legacy control artifact is not valid JSON".to_string(),
-            original_error: source.to_string(),
-        })
-}
-
-fn read_optional_control_text(path: &Path) -> PpResult<Option<String>> {
-    let Some((bytes, _)) = capture_stable_managed_file(
-        path,
-        MAX_CONTROL_READ_BYTES as u64,
-        true,
-        "legacy control artifact",
-    )?
-    else {
-        return Ok(None);
-    };
-    String::from_utf8(bytes)
-        .map(Some)
-        .map_err(|source| PpError::InvalidRequestSource {
-            path: path.to_path_buf(),
-            message: "legacy control artifact must be UTF-8".to_string(),
-            original_error: source.to_string(),
-        })
-}
-
 fn generation_authority_error(root: &Path, message: String) -> PpError {
     PpError::InvalidRequest(format!(
         "generation authority '{}': {message}",
@@ -1476,6 +962,7 @@ fn generation_authority_error(root: &Path, message: String) -> PpError {
 mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use super::super::generation::GenerationRecord;
     use super::*;
 
     #[test]
@@ -1494,7 +981,6 @@ mod tests {
         fs::remove_dir_all(root).expect("cleanup");
     }
 
-    #[cfg(unix)]
     #[test]
     fn input_snapshot_rejects_symlink_retarget_even_with_identical_bytes() {
         use std::os::unix::fs::symlink;
@@ -1581,386 +1067,6 @@ mod tests {
         let error = InputSnapshot::capture(&input, 4).expect_err("oversized input must fail");
 
         assert!(error.to_string().contains("4-byte read limit"));
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[test]
-    fn unrelated_or_malformed_legacy_manifest_is_not_claimed() {
-        let root = temp_root("legacy-unrelated");
-        fs::write(root.join("manifest.json"), b"{").expect("manifest");
-        assert!(legacy_bundle_record(&root)
-            .expect("legacy lookup")
-            .is_none());
-
-        fs::write(
-            root.join("manifest.json"),
-            br#"{"app":"other","schema":"perfectpixel.sprite/3"}"#,
-        )
-        .expect("other manifest");
-        assert!(legacy_bundle_record(&root)
-            .expect("legacy lookup")
-            .is_none());
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[test]
-    fn recognized_but_invalid_legacy_manifest_fails_closed() {
-        let root = temp_root("legacy-invalid");
-        fs::write(
-            root.join("manifest.json"),
-            br#"{"app":"perfectpixel","schema":"perfectpixel.sprite/3"}"#,
-        )
-        .expect("manifest");
-
-        let error = legacy_bundle_record(&root).expect_err("invalid claimed manifest");
-        assert!(error.to_string().contains("violates its contract"));
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[test]
-    fn recognized_but_incomplete_legacy_generation_fails_closed() {
-        let root = temp_root("legacy-incomplete");
-        fs::write(
-            root.join("manifest.json"),
-            br#"{
-                "app": "perfectpixel",
-                "generator": "perfectpixel",
-                "schema": "perfectpixel.sprite/3",
-                "version": 3,
-                "character": "legacy",
-                "packing": {
-                    "algorithm": "maxrects",
-                    "trim": true,
-                    "padding": 2,
-                    "allowRotation": false,
-                    "multipack": true,
-                    "maxWidth": 64,
-                    "maxHeight": 64
-                },
-                "sheets": [{"index": 0, "image": "sheet.png", "width": 1, "height": 1}],
-                "animations": {}
-            }"#,
-        )
-        .expect("manifest");
-
-        let error = legacy_bundle_record(&root).expect_err("missing declared sheet");
-        assert!(error.to_string().contains("incomplete"));
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[test]
-    fn published_authority_is_the_only_state_source() {
-        let root = temp_root("published-authority");
-        let authority = GenerationAuthority::new(Vec::new()).expect("authority");
-        fs::write(
-            root.join(GENERATION_AUTHORITY_FILE),
-            authority.to_pretty_json().expect("authority json"),
-        )
-        .expect("authority file");
-        fs::write(
-            root.join("manifest.json"),
-            br#"{"app":"perfectpixel","schema":"perfectpixel.sprite/3"}"#,
-        )
-        .expect("invalid legacy manifest");
-
-        let (plan, _) = plan_generation_publication(
-            &root,
-            GenerationPublicationRequest {
-                workflow: GenerationWorkflow::Normalize,
-                artifacts: vec![GeneratedArtifact {
-                    relative_path: "normalize-report.json".to_string(),
-                    bytes: b"report".to_vec(),
-                }],
-                invalidates: Vec::new(),
-                input_snapshots: Vec::new(),
-            },
-        )
-        .expect("published authority must prevent legacy rediscovery");
-
-        let authority_entry = plan
-            .entries
-            .iter()
-            .find(|entry| entry.relative_path == Path::new(GENERATION_AUTHORITY_FILE))
-            .expect("authority entry");
-        let next = GenerationAuthority::from_slice(&authority_entry.bytes).expect("next authority");
-        assert_eq!(next.generations.len(), 1);
-        assert_eq!(next.generations[0].workflow, GenerationWorkflow::Normalize);
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[test]
-    fn failed_legacy_normalize_imports_complete_stale_success_set() {
-        let root = temp_root("legacy-normalize-stale");
-        fs::create_dir_all(root.join("frames/idle")).expect("frames");
-        fs::write(
-            root.join("normalize-report.json"),
-            br#"{
-                "ok": false,
-                "schema": "perfectpixel.normalize/1",
-                "character": "legacy",
-                "cellWidth": 1,
-                "cellHeight": 1,
-                "states": [],
-                "gates": [],
-                "errors": ["legacy gate failure"],
-                "warnings": []
-            }"#,
-        )
-        .expect("normalize report");
-        fs::write(
-            root.join("sprite-request.json"),
-            br#"{
-                "character": "legacy",
-                "sheetImage": "sheet.png",
-                "cellWidth": 1,
-                "cellHeight": 1,
-                "states": [{
-                    "name": "idle",
-                    "fps": 1,
-                    "loop": true,
-                    "frames": ["frames/idle/frame-00.png"]
-                }]
-            }"#,
-        )
-        .expect("sprite request");
-        fs::write(root.join("frames/idle/frame-00.png"), b"legacy frame").expect("frame");
-
-        let record = legacy_normalize_record(&root)
-            .expect("legacy normalize")
-            .expect("record");
-        assert_eq!(
-            record
-                .artifacts
-                .iter()
-                .map(|artifact| artifact.relative_path.as_str())
-                .collect::<Vec<_>>(),
-            vec![
-                "frames/idle/frame-00.png",
-                "normalize-report.json",
-                "sprite-request.json"
-            ]
-        );
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[test]
-    fn legacy_motion_build_claims_every_animation_json_for_stale_pruning() {
-        let root = temp_root("legacy-motion-animations");
-        fs::create_dir_all(root.join("dotlottie/a")).expect("animation directory");
-        fs::write(root.join("animated.svg"), b"animated").expect("animated SVG");
-        fs::write(root.join("preview.html"), b"preview").expect("preview");
-        let lottie = |name: &str| {
-            format!(
-                r#"{{"v":"5.12.2","nm":"{name}","meta":{{"g":"perfectpixel@0.1.0"}},"assets":[],"layers":[]}}"#
-            )
-        };
-        let current = lottie("current");
-        fs::write(root.join("animation.json"), &current).expect("animation JSON");
-        fs::write(root.join("dotlottie/a/current.json"), &current).expect("current");
-        fs::write(root.join("dotlottie/a/previous.json"), lottie("previous")).expect("previous");
-        fs::write(
-            root.join("dotlottie/a/unrelated.json"),
-            r#"{"v":"5.12.2","nm":"unrelated","assets":[],"layers":[]}"#,
-        )
-        .expect("unrelated JSON");
-        fs::write(root.join("dotlottie/a/notes.txt"), b"unmanaged").expect("unmanaged note");
-        fs::write(
-            root.join("dotlottie/manifest.json"),
-            br#"{
-                "version": "2",
-                "generator": "perfectpixel@0.1.0",
-                "initial": {"animation": "current"},
-                "animations": [{"id": "current"}]
-            }"#,
-        )
-        .expect("manifest");
-        fs::write(
-            root.join("motion-report.json"),
-            br#"{
-                "schema": "perfectpixel.motion-report/1",
-                "name": "current",
-                "width": 1,
-                "height": 1,
-                "fps": 1,
-                "durationMs": 1,
-                "totalFrames": 1.0,
-                "pathCount": 1,
-                "authoredPathCount": 0,
-                "partCount": 0,
-                "trackCount": 0,
-                "markerCount": 0,
-                "assignedPathCount": 0,
-                "unassignedPathCount": 1,
-                "lottieShapeCount": 1,
-                "animatedSvg": true,
-                "lottieJson": true,
-                "dotlottieV2Layout": true,
-                "dotlottieArchiveCreated": false
-            }"#,
-        )
-        .expect("motion report");
-
-        let record = legacy_motion_build_record(&root)
-            .expect("legacy motion lookup")
-            .expect("legacy motion record");
-        let paths = record
-            .artifacts
-            .iter()
-            .map(|artifact| artifact.relative_path.as_str())
-            .collect::<BTreeSet<_>>();
-
-        assert!(paths.contains("dotlottie/a/current.json"));
-        assert!(paths.contains("dotlottie/a/previous.json"));
-        assert!(!paths.contains("dotlottie/a/unrelated.json"));
-        assert!(!paths.contains("dotlottie/a/notes.txt"));
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[test]
-    fn legacy_motion_scaffold_requires_canonical_cross_file_provenance() {
-        let root = temp_root("legacy-motion-scaffold-provenance");
-        let source = r##"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 8 8"><path d="M1 1L7 1L7 7L1 7Z" fill="#112233"/></svg>"##;
-        let scaffold = MotionCompiler::scaffold(source).expect("scaffold");
-        let mut request = MotionRequest {
-            schema: MOTION_SCHEMA.to_string(),
-            name: "scene".to_string(),
-            source_svg: "scene.svg".to_string(),
-            source_svg_sha256: MotionCompiler::scene_sha256(&scaffold.scene_svg),
-            fps: 30,
-            duration_ms: 1_000,
-            looped: true,
-            authored_paths: Vec::new(),
-            parts: Vec::new(),
-            tracks: Vec::new(),
-            markers: Vec::new(),
-        };
-        fs::write(root.join("scene.svg"), &scaffold.scene_svg).expect("scene");
-        fs::write(
-            root.join("layers.json"),
-            serde_json::to_string_pretty(&scaffold.layers).expect("layers JSON"),
-        )
-        .expect("layers");
-        fs::write(
-            root.join("motion-request.json"),
-            serde_json::to_string_pretty(&request).expect("request JSON"),
-        )
-        .expect("request");
-        fs::write(root.join("layer-inspector.html"), &scaffold.inspector_html).expect("inspector");
-
-        assert!(legacy_motion_scaffold_record(&root)
-            .expect("legacy scaffold lookup")
-            .is_some());
-
-        request.source_svg_sha256 = "00".repeat(32);
-        fs::write(
-            root.join("motion-request.json"),
-            serde_json::to_string_pretty(&request).expect("request JSON"),
-        )
-        .expect("tampered request");
-        let error = legacy_motion_scaffold_record(&root)
-            .expect_err("mismatched cross-file provenance must fail");
-        assert!(error.to_string().contains("hash does not match"));
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[test]
-    fn legacy_motion_build_rejects_mismatched_primary_animation() {
-        let root = temp_root("legacy-motion-animation-binding");
-        fs::create_dir_all(root.join("dotlottie/a")).expect("animation directory");
-        let current = r#"{"v":"5.12.2","nm":"current","meta":{"g":"perfectpixel@0.1.0"},"assets":[],"layers":[]}"#;
-        fs::write(root.join("animated.svg"), b"animated").expect("animated SVG");
-        fs::write(root.join("animation.json"), b"different").expect("primary animation");
-        fs::write(root.join("preview.html"), b"preview").expect("preview");
-        fs::write(root.join("dotlottie/a/current.json"), current).expect("dotLottie animation");
-        fs::write(
-            root.join("dotlottie/manifest.json"),
-            br#"{
-                "version": "2",
-                "generator": "perfectpixel@0.1.0",
-                "initial": {"animation": "current"},
-                "animations": [{"id": "current"}]
-            }"#,
-        )
-        .expect("manifest");
-        fs::write(
-            root.join("motion-report.json"),
-            br#"{
-                "schema": "perfectpixel.motion-report/1",
-                "name": "current",
-                "width": 1,
-                "height": 1,
-                "fps": 1,
-                "durationMs": 1,
-                "totalFrames": 1.0,
-                "pathCount": 1,
-                "authoredPathCount": 0,
-                "partCount": 0,
-                "trackCount": 0,
-                "markerCount": 0,
-                "assignedPathCount": 0,
-                "unassignedPathCount": 1,
-                "lottieShapeCount": 1,
-                "animatedSvg": true,
-                "lottieJson": true,
-                "dotlottieV2Layout": true,
-                "dotlottieArchiveCreated": false
-            }"#,
-        )
-        .expect("motion report");
-
-        let error = legacy_motion_build_record(&root)
-            .expect_err("mismatched primary animation must fail closed");
-        assert!(error.to_string().contains("must exactly match"));
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[test]
-    fn first_publication_migrates_every_recognized_legacy_workflow() {
-        let root = temp_root("initial-migration");
-        fs::write(
-            root.join("normalize-report.json"),
-            br#"{
-                "ok": false,
-                "schema": "perfectpixel.normalize/1",
-                "character": "legacy",
-                "cellWidth": 1,
-                "cellHeight": 1,
-                "states": [],
-                "gates": [],
-                "errors": ["legacy gate failure"],
-                "warnings": []
-            }"#,
-        )
-        .expect("legacy normalize report");
-
-        let (plan, _) = plan_generation_publication(
-            &root,
-            GenerationPublicationRequest {
-                workflow: GenerationWorkflow::Bundle,
-                artifacts: vec![GeneratedArtifact {
-                    relative_path: "manifest.json".to_string(),
-                    bytes: b"new bundle".to_vec(),
-                }],
-                invalidates: Vec::new(),
-                input_snapshots: Vec::new(),
-            },
-        )
-        .expect("initial migration");
-
-        let authority_entry = plan
-            .entries
-            .iter()
-            .find(|entry| entry.relative_path == Path::new(GENERATION_AUTHORITY_FILE))
-            .expect("authority entry");
-        let next = GenerationAuthority::from_slice(&authority_entry.bytes).expect("next authority");
-        assert_eq!(
-            next.generations
-                .iter()
-                .map(|record| record.workflow)
-                .collect::<Vec<_>>(),
-            vec![GenerationWorkflow::Normalize, GenerationWorkflow::Bundle]
-        );
-        assert!(plan.removals.is_empty());
         fs::remove_dir_all(root).expect("cleanup");
     }
 

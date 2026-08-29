@@ -4,6 +4,9 @@ This document describes the implemented architecture of `perfectpixel` 0.3.0.
 The public contract is defined in [CONTRACT.md](CONTRACT.md); capability coverage is
 tracked in [FUNCTION_MATRIX.md](FUNCTION_MATRIX.md).
 
+The platform contract is Rust `cfg(unix)` only: Windows and every non-Unix target fail at
+compilation. The complete runtime gate is verified on macOS arm64.
+
 ## Design rule
 
 The product keeps deterministic decisions in pure Rust data structures and confines
@@ -17,12 +20,11 @@ concurrency, or recovery is real:
 - vector CLI publication uses its existing explicit transaction outcome reducer;
 - ordinary raster transforms remain direct pure functions and are not wrapped in actors.
 
-There is no Tokio runtime in the product. The current executable is a synchronous local
-CLI, and the only shared concurrency boundary is publication to one output root. That
-boundary is serialized by an operating-system file lock (a single non-blocking `try_lock`,
-not a wait — there is no timeout/cancellation boundary for `select!` to add). Adding tasks,
-channels, or an actor there would create a second authority without a concurrent workload
-to isolate. Separately, `io::parallel_map`/`parallel_map_owned` apply bounded
+The core and application layers remain synchronous local Rust. Tokio exists only in the
+`perfectpixel-mcp` stdio adapter: it owns transport handling and isolates each synchronous
+application call with `spawn_blocking`. The CLI itself has no Tokio runtime. The shared product
+publication boundary is serialized by an operating-system file lock (a single non-blocking
+`try_lock`, not a wait). Separately, `io::parallel_map`/`parallel_map_owned` apply bounded
 `std::thread::scope` fan-out/join to CPU-bound, per-item-independent work identified inside
 normalize, atlas packing, and generation-artifact verification (frame resize/crop,
 bbox scans, hashing) — a genuine, narrow concurrency boundary, applied only where it exists.
@@ -35,19 +37,23 @@ guarantee this relies on.
 core (unconditional capability, no dependency on adapters)
     core::{raster, transform, inspect, svg}
     vector::{request, route, evaluation, report, backends, authority}
-    bin/perfectpixel/generation.rs
+    application/generation.rs
 
 adapters (optional packaging features built from core)
     adapters::sprite::{normalize, atlas, manifest, aseprite}
     adapters::motion::{scaffold/build compiler}
 
 application orchestration
-    bin/perfectpixel.rs
-    bin/perfectpixel/generation_adapter.rs
+    application::{mod, request}
+    application::{generation, generation_adapter}
+
+MCP adapter (optional binary boundary)
+    mcp::{params, root, tool server}
+    bin/perfectpixel-mcp.rs
 
 I/O adapters
     io::{codec, atomic, artifact_set, parallel}
-    bin/perfectpixel/asset_codec.rs
+    application/asset_codec.rs
 ```
 
 Core modules do not read command-line arguments, inspect output directories, acquire
@@ -70,6 +76,34 @@ use small concrete adapters (`ImageCodec`, `AtomicFileWriter`, `AtomicDirectoryW
 `AtomicArtifactSetWriter`) because there is only one production mechanism and no domain policy
 depends on substituting them.
 
+## Application boundary and MCP adapter
+
+`src/application/mod.rs` is the shared orchestration boundary. `ApplicationRequest` describes the
+ten product operations and `ApplicationOutput` carries the exact stdout text plus process exit
+code. The thin `src/bin/perfectpixel.rs` CLI entrypoint prints that text and exits with that code;
+the MCP adapter invokes the same boundary and parses the existing JSON only to place it inside its
+MCP envelope.
+
+The MCP path is deliberately one-way:
+
+```text
+MCP typed params
+  -> fixed-root path and nested-request validation
+  -> ApplicationRequest
+  -> spawn_blocking
+  -> application::execute
+  -> {stdout text, exit code}
+  -> MCP structured result envelope
+```
+
+`src/mcp/root.rs` defines the trusted-local fixed-root path boundary. It rejects unsafe path syntax,
+symlink components, root escape, and the root itself as an output directory before the application
+runs, and repeats applicable path checks immediately before execution. Typed request preparse uses
+one open regular-file handle, a limit-plus-one read, and before/after revision/canonical-path
+verification. `src/mcp/mod.rs` owns only MCP routing, typed schemas, one-active-operation admission,
+cancellation-safe worker lifetime, and envelope rendering. It never launches a CLI subprocess or
+rewrites the product's file publication flow.
+
 ## Authoritative state
 
 | State | Authority | Scope |
@@ -81,8 +115,8 @@ depends on substituting them.
 | Vector route/quality policy | Embedded content-addressed vector authority | Process-wide immutable product policy |
 
 No README, filename convention, directory scan, or stale output may override these
-authorities. Legacy generated files are adopted only when the authority file is absent
-and a recognized control artifact proves the complete workflow generation.
+authorities. A root without `.perfectpixel-generation.json` does not auto-adopt existing generated
+outputs; use a clean output directory for first publication. There is no migration shim.
 
 The `edit` and `chroma-plan` commands are intentionally one-invocation pure raster boundaries:
 `chroma-plan` only returns a fixed-palette OKLab decision, while `edit` stages one PNG through
@@ -167,7 +201,7 @@ marker is durable, cleanup failure is still reported but cannot undo the committ
 
 If restoration cannot complete, the journal remains and the next cooperating publication performs
 recovery before planning new work. A terminal journal that reappears after an unconfirmed cleanup is
-cleaned idempotently. Schema `/1` is rejected fail-closed: because it recorded only paths, hashing its
+cleaned idempotently. Unsupported schema `/1` is rejected fail-closed: because it recorded only paths, hashing its
 current backup bytes would not prove those bytes still equal the historical pre-transaction state.
 Numeric transaction names are recognized by grammar rather than native integer range, so stale
 transaction evidence is not ignored merely because a PID or attempt component overflows the current
@@ -273,6 +307,10 @@ of modified user files.
 
 ## Residual boundaries
 
+- The fixed MCP root is a trusted-local path boundary. Static traversal and symlink escapes fail
+  closed, paths are rechecked immediately before application execution, and the adapter and
+  application enforce their documented resource limits. The boundary assumes cooperating local
+  writers.
 - The publisher coordinates cooperating writers only; an unrelated process can still
   race ordinary path-based filesystem operations.
 - Crash and power-loss behavior depends on filesystem `fsync` and rename semantics and requires
@@ -287,7 +325,5 @@ of modified user files.
   the new file has become visible. Callers must inspect the destination before retrying that error.
 - Exact directory publication does not represent standalone empty subdirectories or file↔directory
   path-shape transitions.
-- Windows compilation, replacement semantics, and non-Unix file-revision behavior require
-  target-specific verification.
-- The source package records these as verification risks rather than hiding them with a
-  fallback path.
+- Non-Unix targets are unsupported and rejected at crate compilation; they are not residual
+  runtime-verification targets.
