@@ -1,12 +1,12 @@
 # Vector/SVG Authority
 
-Status: Current authority guide for the 0.3.0 vector runtime.
+Status: Current authority guide for the 0.3.1 vector runtime.
 
 Normative: Yes — lifecycle and authority vocabulary grounded in `docs/CONTRACT.md`.
 
 Implemented: Yes. The breaking API/CLI transition and compact route promotions are active.
 
-> **Status: current authority, 0.3.0.** This document describes the implemented vector transition. The normative public contract is [../CONTRACT.md](../CONTRACT.md); this document records its authority vocabulary and lifecycle.
+> **Status: current authority, 0.3.1.** This document describes the implemented vector transition. The normative public contract is [../CONTRACT.md](../CONTRACT.md); this document records its authority vocabulary and lifecycle.
 
 ## Public surface
 

@@ -32,7 +32,7 @@ use root::{Root, RootPathError};
 
 pub(crate) const MCP_RESULT_SCHEMA: &str = "perfectpixel.mcp-tool-result/1";
 const MAX_REQUEST_PREPARSE_BYTES: usize = 8 * 1024 * 1024;
-pub const MCP_HELP: &str = r#"perfectpixel-mcp 0.3.0
+pub const MCP_HELP: &str = r#"perfectpixel-mcp 0.3.1
 
 USAGE
   perfectpixel-mcp --root <ABSOLUTE_EXISTING_DIRECTORY>

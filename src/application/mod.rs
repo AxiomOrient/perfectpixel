@@ -5,13 +5,14 @@ use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
 use crate::{
-    compose_bundle_with_packing, inspect_raster, normalize_sprite, resize_raster,
-    validate_normalize_plan_contract, AtomicArtifactSetWriter, AtomicDirectoryEntry,
-    AtomicDirectoryWriter, AtomicFileWriter, BundlePlan, DecodeLimits, ImageCodec, MotionCompiler,
-    MotionRequest, NormalizePlan, NormalizeRequest, NormalizeStateImages, NormalizeStateSource,
-    PngEncoder, Raster, RasterInspection, ResampleFilter, SpriteBundleRequest, StateFrames,
-    UnitScore, VectorAnalysisRequest, VectorDetail, VectorOutcome, VectorPolicy, VectorRequest,
-    Vectorizer, MOTION_SCHEMA,
+    apply_raster_edits_with_evidence, compose_bundle_with_packing, inspect_raster,
+    normalize_sprite, resize_raster, validate_normalize_plan_contract, AtomicArtifactSetWriter,
+    AtomicDirectoryEntry, AtomicDirectoryWriter, AtomicFileWriter, BundlePlan, DecodeLimits,
+    ImageCodec, MotionCompiler, MotionRequest, NormalizePlan, NormalizeRequest,
+    NormalizeStateImages, NormalizeStateSource, PngEncoder, Raster, RasterInspection,
+    ResampleFilter, SpriteBundleRequest, StateFrames, UnitScore, VectorAnalysisRequest,
+    VectorDetail, VectorOutcome, VectorPolicy, VectorRequest, Vectorizer, CHROMA_CANDIDATE_PALETTE,
+    CHROMA_PLAN_METRIC, CHROMA_PLAN_SCHEMA, MOTION_SCHEMA,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
@@ -39,6 +40,7 @@ const MAX_CONTROL_READ_BYTES: usize = 8 * 1024 * 1024;
 const MAX_SVG_READ_BYTES: usize = 16 * 1024 * 1024;
 const MAX_ARTIFACT_FILE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_RASTER_READ_BYTES: usize = 320 * 1024 * 1024;
+const CHROMA_PLAN_OPERATION: &str = "chroma_plan";
 const MAX_GENERATION_DECODED_RASTER_BYTES: usize = 512 * 1024 * 1024;
 const VECTOR_DIAGNOSTICS_OWNERSHIP_FILE: &str = ".perfectpixel-vector-diagnostics.json";
 const VECTOR_DIAGNOSTICS_OWNERSHIP_SCHEMA: &str = "perfectpixel.vector-diagnostics-ownership/1";
@@ -47,7 +49,7 @@ const ASSET_INSPECTION_SCHEMA: &str = "perfectpixel.asset-inspection/1";
 const ASSET_TRANSFORM_SCHEMA: &str = "perfectpixel.asset-transform/1";
 const ASSET_DIGEST_ENCODING: &str = "sha256-lowercase-hex";
 
-const HELP: &str = r#"perfectpixel 0.3.0
+const HELP: &str = r#"perfectpixel 0.3.1
 
 PRODUCT
   deterministic asset compiler for AI-generated or authored local assets.
@@ -59,12 +61,27 @@ USAGE
   perfectpixel inspect <input.png|jpg|jpeg|webp>
   perfectpixel convert <input.png|jpg|jpeg|webp> --out <output.png|jpg|jpeg|webp> [--width <positive integer>] [--height <positive integer>] [--filter nearest|lanczos3] [--jpeg-quality <1..100>] [--background <#RRGGBB>]
   perfectpixel upscale <input.png|jpg|jpeg|webp> --out <output.png|jpg|jpeg|webp> --scale <integer >=2> [--filter nearest|lanczos3] [--jpeg-quality <1..100>] [--background <#RRGGBB>]
+  perfectpixel edit --request <edit-request.json>
+  perfectpixel chroma-plan --request <chroma-plan-request.json>
   perfectpixel vector <input.png|jpg|jpeg|webp> --out <output.svg> [--preset auto|pixel-art|legacy-lossless|flat-icon|line-art|bounded-illustration] [--profile compact|motion-structure-ready] [--detail auto|1|2|3|4|5] [--min-quality <0..1>] [--max-quality-loss <0..1>] [--max-paths <positive integer>] [--policy <vector-policy.json>] [--report <evaluation.json>] [--diagnostics <dir>]
   perfectpixel vector-analyze <input.png|jpg|jpeg|webp> [--preset auto|pixel-art|legacy-lossless|flat-icon|line-art|bounded-illustration] [--profile compact|motion-structure-ready] [--policy <vector-policy.json>] [--report <analysis.json>]
   perfectpixel normalize --request <normalize-request.json> --out-dir <dir>
   perfectpixel bundle --request <sprite-request.json> --out-dir <dir>
   perfectpixel motion-scaffold <input.svg> --out-dir <dir>
   perfectpixel motion-build --request <motion-request.json> --out-dir <dir>
+
+EDIT REQUEST
+  {"schemaVersion":1,"operation":"edit","input":"source.png","output":"edited.png","steps":[
+    {"op":"crop","x":0,"y":0,"width":512,"height":512},
+    {"op":"rotate","quarterTurns":1},
+    {"op":"flip","axis":"horizontal"},
+    {"op":"resize","width":256,"height":256,"filter":"lanczos3"}
+  ]}
+
+CHROMA PLAN REQUEST
+  {"schemaVersion":1,"operation":"chroma_plan","subjectRgbColors":[[255,255,255],[32,32,32]]}
+  Selects one fixed high-saturation background candidate by OKLab maximin distance.
+  This is controlled chroma planning, not semantic segmentation or matting.
 
 SPRITE REQUEST
   {
@@ -228,6 +245,8 @@ fn run(args: Vec<String>) -> PpResult<String> {
         "inspect" => inspect(&args[1..]),
         "convert" => convert(&args[1..]),
         "upscale" => upscale(&args[1..]),
+        "edit" => edit(&args[1..]),
+        "chroma-plan" => chroma_plan(&args[1..]),
         "vector" => vector(&args[1..]),
         "vector-analyze" => vector_analyze(&args[1..]),
         "normalize" => normalize(&args[1..]),
@@ -235,7 +254,7 @@ fn run(args: Vec<String>) -> PpResult<String> {
         "motion-scaffold" => motion_scaffold(&args[1..]),
         "motion-build" => motion_build(&args[1..]),
         other => Err(PpError::InvalidOption(format!(
-            "unknown command '{}'; use schema, inspect, convert, upscale, vector, vector-analyze, normalize, bundle, motion-scaffold, or motion-build",
+            "unknown command '{}'; use schema, inspect, convert, upscale, edit, chroma-plan, vector, vector-analyze, normalize, bundle, motion-scaffold, or motion-build",
             other
         ))),
     }
@@ -244,6 +263,7 @@ fn run(args: Vec<String>) -> PpResult<String> {
 fn schema() -> PpResult<String> {
     serde_json::to_string_pretty(&SchemaPayload {
         cli_version: env!("CARGO_PKG_VERSION"),
+        inspect_schema: ASSET_INSPECTION_SCHEMA,
         role: "deterministic-asset-compiler",
         model_inference: false,
         network_required: false,
@@ -253,6 +273,8 @@ fn schema() -> PpResult<String> {
             "inspect",
             "convert",
             "upscale",
+            "edit",
+            "chroma-plan",
             "vector",
             "vector-analyze",
             "normalize",
@@ -301,6 +323,47 @@ fn schema() -> PpResult<String> {
             webp_output: "lossless RGBA",
             convert_filters: &["nearest", "lanczos3"],
             upscale_default_filter: "nearest",
+        },
+        edit_command: EditCommandSchema {
+            request_schema: EDIT_SCHEMA,
+            input: "input raster path (png, jpg, jpeg, or webp)",
+            output: "atomic PNG output path",
+            operations: &[
+                "crop",
+                "rotate",
+                "flip",
+                "resize",
+                "remove_background",
+                "remove_background_auto",
+            ],
+            filters: &["nearest", "lanczos3"],
+            maximum_steps: 64,
+            semantic_editing: false,
+        },
+        chroma_plan_schema: CHROMA_PLAN_SCHEMA,
+        chroma_plan_command: ChromaPlanCommandSchema {
+            request_schema: CHROMA_PLAN_SCHEMA,
+            operation: CHROMA_PLAN_OPERATION,
+            schema_version: 1,
+            required_fields: &["schemaVersion", "operation", "subjectRgbColors"],
+            subject_rgb_colors: "1..=32 unique RGB triplets",
+            minimum_subject_colors: 1,
+            maximum_subject_colors: 32,
+            candidate_palette: &CHROMA_CANDIDATE_PALETTE,
+            candidate_count: CHROMA_CANDIDATE_PALETTE.len(),
+            metric: CHROMA_PLAN_METRIC,
+            output: &[
+                "schema",
+                "schemaVersion",
+                "ok",
+                "operation",
+                "subjectRgbColors",
+                "metric",
+                "selectedRgb",
+                "selectedHex",
+                "minDistance",
+                "candidateScores",
+            ],
         },
         vector_command: VectorCommandSchema {
             arguments: &["<input.png|jpg|jpeg|webp>"],
@@ -358,6 +421,7 @@ fn inspect(args: &[String]) -> PpResult<String> {
     let inspection = inspect_raster(&image);
     serde_json::to_string_pretty(&InspectPayload {
         schema: ASSET_INSPECTION_SCHEMA,
+        schema_version: 1,
         ok: true,
         input: input.display().to_string(),
         input_sha256: crate::sha256_hex(&bytes),
@@ -368,6 +432,49 @@ fn inspect(args: &[String]) -> PpResult<String> {
         path: PathBuf::from("<inspect>"),
         message: source.to_string(),
     })
+}
+
+fn chroma_plan(args: &[String]) -> PpResult<String> {
+    validate_options(args, &["--request"])?;
+    let request_path = option_path(args, "--request")?;
+    validate_file_extension(&request_path, &["json"], "chroma plan request")?;
+    let (request, _request_snapshot): (ChromaPlanRequest, _) =
+        read_json_request_snapshot(&request_path)?;
+    if request.schema_version != 1 || request.operation != CHROMA_PLAN_OPERATION {
+        return Err(PpError::InvalidRequest(
+            "chroma plan request schemaVersion must be 1 and operation must be 'chroma_plan'"
+                .to_string(),
+        ));
+    }
+    let plan = crate::plan_chroma(&request.subject_rgb_colors)?;
+    let candidate_scores = plan
+        .candidates
+        .iter()
+        .map(|candidate| ChromaCandidateScorePayload {
+            rgb: candidate.rgb,
+            hex: rgb_hex(candidate.rgb),
+            score: candidate.min_distance,
+        })
+        .collect();
+    serialize_json(
+        &ChromaPlanResponse {
+            schema: CHROMA_PLAN_SCHEMA,
+            schema_version: 1,
+            ok: true,
+            operation: CHROMA_PLAN_OPERATION,
+            subject_rgb_colors: request.subject_rgb_colors,
+            metric: CHROMA_PLAN_METRIC,
+            selected_rgb: plan.selected_rgb,
+            selected_hex: rgb_hex(plan.selected_rgb),
+            min_distance: plan.min_distance,
+            candidate_scores,
+        },
+        "<chroma-plan>",
+    )
+}
+
+fn rgb_hex(rgb: [u8; 3]) -> String {
+    format!("#{:02X}{:02X}{:02X}", rgb[0], rgb[1], rgb[2])
 }
 
 fn convert(args: &[String]) -> PpResult<String> {
@@ -391,6 +498,82 @@ fn upscale(args: &[String]) -> PpResult<String> {
         .ok_or_else(|| PpError::InvalidRequest("upscale dimensions overflow".to_string()))?;
     validate_output_dimensions(width, height)?;
     write_asset_transform("upscale", options, (width, height))
+}
+
+fn edit(args: &[String]) -> PpResult<String> {
+    validate_options(args, &["--request"])?;
+    let request_path = option_path(args, "--request")?;
+    validate_file_extension(&request_path, &["json"], "edit request")?;
+    let (request, _request_snapshot): (EditRequest, _) = read_json_request_snapshot(&request_path)?;
+    let base_dir = request_path.parent().unwrap_or_else(|| Path::new("."));
+    let input = resolve_edit_path(base_dir, &request.input, "input")?;
+    let output = resolve_edit_path(base_dir, &request.output, "output")?;
+    validate_raster_input_path(&input)?;
+    validate_file_extension(&output, &["png"], "edit output")?;
+    reject_same_path(&input, &output, "edit input and output must not collide")?;
+    if request.schema_version != 1 || request.operation != "edit" {
+        return Err(PpError::InvalidRequest(
+            "edit request schemaVersion must be 1 and operation must be 'edit'".to_string(),
+        ));
+    }
+    if request.steps.is_empty() || request.steps.len() > 64 {
+        return Err(PpError::InvalidRequest(
+            "edit request steps must contain 1..=64 entries".to_string(),
+        ));
+    }
+    let (source, _input_snapshot) = decode_raster_snapshot(&input)?;
+    let edits = request
+        .steps
+        .iter()
+        .map(EditStep::to_raster_edit)
+        .collect::<PpResult<Vec<_>>>()?;
+    let (result, auto_plans) = apply_raster_edits_with_evidence(&source, &edits)?;
+    let encoded = PngEncoder::encode_rgba(&result)?;
+    reject_same_path(
+        &request_path,
+        &output,
+        "edit output must not overwrite its request",
+    )?;
+    AtomicFileWriter::write_bytes(&output, &encoded)?;
+    serialize_json(
+        &EditSummary {
+            schema: EDIT_SCHEMA,
+            ok: true,
+            operation: "edit",
+            input: input.display().to_string(),
+            output: output.display().to_string(),
+            input_width: source.width(),
+            input_height: source.height(),
+            output_width: result.width(),
+            output_height: result.height(),
+            steps: request.steps.iter().map(EditStep::evidence_name).collect(),
+            output_sha256: crate::sha256_hex(&encoded),
+            auto_background: auto_plans
+                .into_iter()
+                .map(|plan| AutoBackgroundEvidence {
+                    selected_keys: plan.selected_keys,
+                    edge_coverage_basis_points: plan.edge_coverage_basis_points,
+                })
+                .collect(),
+        },
+        "<edit-summary>",
+    )
+}
+
+const EDIT_SCHEMA: &str = "perfectpixel.image-edit/1";
+
+fn resolve_edit_path(base_dir: &Path, value: &str, label: &str) -> PpResult<PathBuf> {
+    if value.trim().is_empty() || value != value.trim() || value.contains('\0') {
+        return Err(PpError::InvalidRequest(format!(
+            "edit {label} path must be a non-empty printable path"
+        )));
+    }
+    let path = Path::new(value);
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        Ok(base_dir.join(path))
+    }
 }
 
 fn asset_options(
@@ -2484,11 +2667,14 @@ impl VectorCliOptions {
 #[serde(rename_all = "camelCase")]
 struct SchemaPayload {
     cli_version: &'static str,
+    inspect_schema: &'static str,
     role: &'static str,
     model_inference: bool,
     network_required: bool,
     publication_policy: &'static str,
     commands: &'static [&'static str],
+    chroma_plan_schema: &'static str,
+    chroma_plan_command: ChromaPlanCommandSchema,
     normalize_schema: &'static str,
     normalize_outputs: &'static [&'static str],
     bundle_schema: &'static str,
@@ -2501,10 +2687,39 @@ struct SchemaPayload {
     vector_presets: &'static [&'static str],
     vector_profiles: &'static [&'static str],
     asset_adapter: AssetAdapterSchema,
+    edit_command: EditCommandSchema,
     vector_command: VectorCommandSchema,
     vector_analyze_command: VectorAnalyzeCommandSchema,
     vector_authority: &'static str,
     packing_defaults: PackingDefaultsPayload,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EditCommandSchema {
+    request_schema: &'static str,
+    input: &'static str,
+    output: &'static str,
+    operations: &'static [&'static str],
+    filters: &'static [&'static str],
+    maximum_steps: usize,
+    semantic_editing: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChromaPlanCommandSchema {
+    request_schema: &'static str,
+    operation: &'static str,
+    schema_version: u32,
+    required_fields: &'static [&'static str],
+    subject_rgb_colors: &'static str,
+    minimum_subject_colors: usize,
+    maximum_subject_colors: usize,
+    candidate_palette: &'static [[u8; 3]; 8],
+    candidate_count: usize,
+    metric: &'static str,
+    output: &'static [&'static str],
 }
 
 #[derive(Serialize)]
@@ -2575,6 +2790,7 @@ struct PackingDefaultsPayload {
 #[serde(rename_all = "camelCase")]
 struct InspectPayload {
     schema: &'static str,
+    schema_version: u32,
     ok: bool,
     input: String,
     input_sha256: String,
@@ -2601,6 +2817,190 @@ struct AssetTransformSummary {
     output_height: u32,
     format: &'static str,
     filter: &'static str,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ChromaPlanRequest {
+    schema_version: u32,
+    operation: String,
+    subject_rgb_colors: Vec<[u8; 3]>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChromaPlanResponse {
+    schema: &'static str,
+    schema_version: u32,
+    ok: bool,
+    operation: &'static str,
+    subject_rgb_colors: Vec<[u8; 3]>,
+    metric: &'static str,
+    selected_rgb: [u8; 3],
+    selected_hex: String,
+    min_distance: f64,
+    candidate_scores: Vec<ChromaCandidateScorePayload>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChromaCandidateScorePayload {
+    rgb: [u8; 3],
+    hex: String,
+    score: f64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct EditRequest {
+    schema_version: u32,
+    operation: String,
+    input: String,
+    output: String,
+    steps: Vec<EditStep>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+enum EditStep {
+    Crop {
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+    },
+    Rotate {
+        #[serde(rename = "quarterTurns")]
+        quarter_turns: u8,
+    },
+    Flip {
+        axis: EditFlipAxis,
+    },
+    Resize {
+        width: u32,
+        height: u32,
+        filter: EditFilter,
+    },
+    RemoveBackground {
+        keys: Vec<[u8; 3]>,
+        tolerance: u8,
+        feather: u8,
+    },
+    RemoveBackgroundAuto {
+        #[serde(rename = "maxKeys")]
+        max_keys: u8,
+        #[serde(rename = "minEdgeCoverageBasisPoints")]
+        min_edge_coverage_basis_points: u16,
+        tolerance: u8,
+        feather: u8,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum EditFlipAxis {
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum EditFilter {
+    Nearest,
+    Lanczos3,
+}
+
+impl EditStep {
+    fn to_raster_edit(&self) -> PpResult<crate::RasterEdit> {
+        Ok(match self {
+            Self::Crop {
+                x,
+                y,
+                width,
+                height,
+            } => crate::RasterEdit::Crop {
+                x: *x,
+                y: *y,
+                width: *width,
+                height: *height,
+            },
+            Self::Rotate { quarter_turns } => crate::RasterEdit::RotateQuarterTurns {
+                quarter_turns: *quarter_turns,
+            },
+            Self::Flip { axis } => match axis {
+                EditFlipAxis::Horizontal => crate::RasterEdit::FlipHorizontal,
+                EditFlipAxis::Vertical => crate::RasterEdit::FlipVertical,
+            },
+            Self::Resize {
+                width,
+                height,
+                filter,
+            } => crate::RasterEdit::Resize {
+                width: *width,
+                height: *height,
+                filter: match filter {
+                    EditFilter::Nearest => crate::ResampleFilter::Nearest,
+                    EditFilter::Lanczos3 => crate::ResampleFilter::Lanczos3,
+                },
+            },
+            Self::RemoveBackground {
+                keys,
+                tolerance,
+                feather,
+            } => crate::RasterEdit::RemoveBackground {
+                keys: keys.clone(),
+                tolerance: *tolerance,
+                feather: *feather,
+            },
+            Self::RemoveBackgroundAuto {
+                max_keys,
+                min_edge_coverage_basis_points,
+                tolerance,
+                feather,
+            } => crate::RasterEdit::RemoveBackgroundAuto {
+                max_keys: *max_keys,
+                min_edge_coverage_basis_points: *min_edge_coverage_basis_points,
+                tolerance: *tolerance,
+                feather: *feather,
+            },
+        })
+    }
+
+    fn evidence_name(&self) -> &'static str {
+        match self {
+            Self::Crop { .. } => "crop",
+            Self::Rotate { .. } => "rotate",
+            Self::Flip { .. } => "flip",
+            Self::Resize { .. } => "resize",
+            Self::RemoveBackground { .. } => "remove_background",
+            Self::RemoveBackgroundAuto { .. } => "remove_background_auto",
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EditSummary {
+    schema: &'static str,
+    ok: bool,
+    operation: &'static str,
+    input: String,
+    output: String,
+    input_width: u32,
+    input_height: u32,
+    output_width: u32,
+    output_height: u32,
+    steps: Vec<&'static str>,
+    output_sha256: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    auto_background: Vec<AutoBackgroundEvidence>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AutoBackgroundEvidence {
+    selected_keys: Vec<[u8; 3]>,
+    edge_coverage_basis_points: u16,
 }
 
 #[derive(Serialize)]

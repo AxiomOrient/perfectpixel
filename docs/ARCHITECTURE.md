@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the implemented architecture of `perfectpixel` 0.3.0.
+This document describes the implemented architecture of `perfectpixel` 0.3.1.
 The public contract is defined in [CONTRACT.md](CONTRACT.md); capability coverage is
 tracked in [FUNCTION_MATRIX.md](FUNCTION_MATRIX.md).
 

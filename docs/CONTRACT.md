@@ -1,5 +1,5 @@
 # Product Contract
-> **Status: current user-facing contract, 0.3.0.** This document records shipped public behavior; `perfectpixel schema`, the implementation, and tests are the executable source of truth if it ever drifts. Historical transition plans are non-normative and cannot authorize commands, APIs, routes, thresholds, reports, or publication.
+> **Status: current user-facing contract, 0.3.1.** This document records shipped public behavior; `perfectpixel schema`, the implementation, and tests are the executable source of truth if it ever drifts. Historical transition plans are non-normative and cannot authorize commands, APIs, routes, thresholds, reports, or publication.
 
 
 This document defines the public behavior of the local Rust CLI. Where it and the code

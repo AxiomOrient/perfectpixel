@@ -61,7 +61,7 @@ Adaptive simplification and locked-palette mapping are different operations:
 | Mode | Input | Output decision |
 | --- | --- | --- |
 | Adaptive simplification | Image plus calibrated policy/profile | Runtime chooses how many safe merges to accept. |
-| Locked palette | Explicit `allowedPalette`/`requiredPalette` | Candidate paints must satisfy an exact allowlist; current 0.3.0 behavior is validation only. |
+| Locked palette | Explicit `allowedPalette`/`requiredPalette` | Candidate paints must satisfy an exact allowlist; current 0.3.1 behavior is validation only. |
 
 The default adaptive route chooses its result from measured quality and structural complexity. A
 future explicit palette-mapping feature may map regions to an arbitrary user palette, but it must be

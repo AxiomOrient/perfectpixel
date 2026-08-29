@@ -1,6 +1,6 @@
 # Vector Quality Contract
 
-Status: Current normative quality and route-activation contract for the 0.3.0 vector runtime.
+Status: Current normative quality and route-activation contract for the 0.3.1 vector runtime.
 
 Normative: Yes — quality and gate rules grounded in the approved Vector/SVG Transition Roadmap.
 

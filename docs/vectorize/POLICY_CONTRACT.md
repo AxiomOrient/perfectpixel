@@ -1,6 +1,6 @@
 # Vector Policy Contract
 
-Status: Current normative policy contract for the 0.3.0 vector runtime.
+Status: Current normative policy contract for the 0.3.1 vector runtime.
 
 Normative: Yes — `perfectpixel.vector-policy/1`, grounded in the approved Vector/SVG Transition Roadmap.
 
