@@ -43,11 +43,13 @@ pub use adapters::sprite::{
 pub use core::sha256::{is_sha256_hex, sha256, sha256_hex};
 #[cfg(unix)]
 pub use core::{
-    apply_raster_edits, apply_raster_edits_with_evidence, content_bbox, inspect_raster,
+    apply_raster_edits, apply_raster_edits_with_evidence, content_bbox, encode_psd, inspect_raster,
     oklab_distance, plan_chroma, plan_remove_background_auto, resize_raster, AutoBackgroundPlan,
     ChromaCandidateScore, ChromaPlan, EdgePaletteEntry, FrameRect, Point, PpError, PpResult,
-    Raster, RasterEdit, RasterInspection, ResampleFilter, Size, SvgContract, SvgReport,
-    CHROMA_CANDIDATE_PALETTE, CHROMA_PLAN_METRIC, CHROMA_PLAN_SCHEMA,
+    PsdEncoded, PsdPathOptions, Raster, RasterEdit, RasterInspection, ResampleFilter, Size,
+    SvgContract, SvgReport, CHROMA_CANDIDATE_PALETTE, CHROMA_PLAN_METRIC, CHROMA_PLAN_SCHEMA,
+    PSD_DEFAULT_ALPHA_THRESHOLD, PSD_DEFAULT_MAX_KNOTS, PSD_EXPORT_SCHEMA, PSD_MAX_DIMENSION,
+    PSD_MAX_KNOTS, PSD_MAX_OUTPUT_BYTES,
 };
 #[cfg(unix)]
 #[doc(hidden)]

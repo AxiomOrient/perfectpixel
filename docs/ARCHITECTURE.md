@@ -35,7 +35,7 @@ guarantee this relies on.
 
 ```text
 core (unconditional capability, no dependency on adapters)
-    core::{raster, transform, inspect, svg}
+    core::{raster, transform, inspect, psd, svg}
     vector::{request, route, evaluation, report, backends, authority}
     application/generation.rs
 
@@ -118,12 +118,16 @@ No README, filename convention, directory scan, or stale output may override the
 authorities. A root without `.perfectpixel-generation.json` does not auto-adopt existing generated
 outputs; use a clean output directory for first publication. There is no migration shim.
 
-The `edit` and `chroma-plan` commands are intentionally one-invocation pure raster boundaries:
+The `edit`, `psd`, and `chroma-plan` commands are intentionally one-invocation pure raster boundaries:
 `chroma-plan` only returns a fixed-palette OKLab decision, while `edit` stages one PNG through
 `AtomicFileWriter` after its bounded transforms succeed. `remove_background_auto` computes a
 complete edge histogram and an integer coverage proof before reusing the existing four-connected
 keyed flood; it is controlled chroma/checker/flat-edge cleanup, not semantic segmentation or
 matting, and heterogeneous photographic edges fail closed when the requested coverage is unmet.
+`psd` stages one flattened PSD after the pure encoder has validated the bounded 8-bit RGB header,
+exact raw RGBA planes, Adobe path resources, and alpha-derived contour complexity. Soft alpha
+remains authoritative in the raster; the path is a deterministic hard-edge even-odd aid for
+Photoshop-compatible consumers, not a claim that this host has opened Photoshop's UI.
 
 ## Generated workflow
 

@@ -27,6 +27,7 @@ for direct dependency versions and license expressions.
 | `convert` | PNG, JPG, JPEG, or WebP | PNG, JPEG, or lossless WebP plus input/output digests | JPEG transparency requires an explicit background color. |
 | `upscale` | PNG, JPG, JPEG, or WebP | PNG, JPEG, or lossless WebP plus input/output digests | Independent interpolation resize; defaults to pixel-safe nearest neighbor. |
 | `edit` | Strict JSON request and one raster | Atomically published RGBA PNG plus strict evidence | Sequential crop, quarter-turn rotate, flip, nearest/Lanczos3 resize, explicit edge-connected background removal, and controlled auto-key removal for flat/chroma edges. |
+| `psd` | Strict JSON request and one raster | Flattened PSD v1 with RGBA planes and Photoshop path resources | Deterministic 8-bit RGB PSD, soft alpha preserved in the raster, hard-edge even-odd contours in Working/Cutout paths; native Photoshop UI opening is not proven on this host. |
 | `chroma-plan` | Strict JSON request with 1–32 subject RGB colors | Versioned candidate palette and OKLab maximin evidence | Fixed high-saturation palette with deterministic RGB tie-break; no semantic segmentation or photo matting. |
 | `normalize` | JSON request and raster frames or a strip | Quality report and, on success, bundle-ready frames/request | Source paths are request-relative. |
 | `bundle` | Sprite request and frame images | PerfectPixel v3 manifest, atlas pages, Aseprite JSON, copied frames | Manages only files declared by the bundle manifest. |
@@ -81,17 +82,20 @@ perfectpixel upscale sprites/idle.png --out sprites/idle@2x.png --scale 2
 # 3. Apply deterministic post-generation edits (no semantic AI claims).
 perfectpixel edit --request image-edit-request.json
 
-# 4. Plan a controlled chroma key when the subject colors are known.
+# 4. Export a flattened PSD with a deterministic alpha-derived path.
+perfectpixel psd --request image-psd-request.json
+
+# 5. Plan a controlled chroma key when the subject colors are known.
 perfectpixel chroma-plan --request chroma-plan-request.json
 
-# 5. Normalize generated sprite frames, then build the generated request.
+# 6. Normalize generated sprite frames, then build the generated request.
 perfectpixel normalize --request normalize-request.json --out-dir normalized
 perfectpixel bundle --request normalized/sprite-request.json --out-dir bundle
 
-# 4. Generate SVG only for an explicitly supported family that passes its gates.
+# 7. Generate SVG only for an explicitly supported family that passes its gates.
 perfectpixel vector icon.png --out icon.svg --preset flat-icon --profile compact
 
-# 5. Scaffold and build bounded motion from a supported raster-free SVG.
+# 8. Scaffold and build bounded motion from a supported raster-free SVG.
 perfectpixel motion-scaffold icon.svg --out-dir motion
 perfectpixel motion-build --request motion/motion-request.json --out-dir motion
 ```
@@ -99,6 +103,15 @@ perfectpixel motion-build --request motion/motion-request.json --out-dir motion
 `vector --preset auto` may abstain and require an explicit family. A rejection is a
 normal result: it does not publish a final SVG. Use `vector-analyze` when route and
 profile evidence is needed without candidate generation.
+
+The PSD request requires `schemaVersion: 1`, `operation: "export_psd"`, raster `input`,
+`.psd` `output`, and explicit `path.alphaThreshold` (`1..=255`) plus `path.maxKnots`
+(`1..=32768`). The exporter preserves all RGBA bytes as four raw planar channels and
+derives bounded hard-edge contours from alpha at the requested threshold. It writes Adobe
+resources 1025 (Working Path), 2000 (Cutout Path), and 2999 (clipping-path name, flatness,
+and even-odd fill rule). It is flattened: there are no Photoshop layers or PSB features,
+and Photoshop-native opening/UI verification is an environment boundary rather than a
+claim of the local test suite.
 
 ## Request defaults that differ by command
 

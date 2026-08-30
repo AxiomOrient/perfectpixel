@@ -12,7 +12,8 @@ use crate::{
     NormalizeStateImages, NormalizeStateSource, PngEncoder, Raster, RasterInspection,
     ResampleFilter, SpriteBundleRequest, StateFrames, UnitScore, VectorAnalysisRequest,
     VectorDetail, VectorOutcome, VectorPolicy, VectorRequest, Vectorizer, CHROMA_CANDIDATE_PALETTE,
-    CHROMA_PLAN_METRIC, CHROMA_PLAN_SCHEMA, MOTION_SCHEMA,
+    CHROMA_PLAN_METRIC, CHROMA_PLAN_SCHEMA, MOTION_SCHEMA, PSD_DEFAULT_ALPHA_THRESHOLD,
+    PSD_DEFAULT_MAX_KNOTS, PSD_EXPORT_SCHEMA, PSD_MAX_DIMENSION, PSD_MAX_KNOTS,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
@@ -62,6 +63,7 @@ USAGE
   perfectpixel convert <input.png|jpg|jpeg|webp> --out <output.png|jpg|jpeg|webp> [--width <positive integer>] [--height <positive integer>] [--filter nearest|lanczos3] [--jpeg-quality <1..100>] [--background <#RRGGBB>]
   perfectpixel upscale <input.png|jpg|jpeg|webp> --out <output.png|jpg|jpeg|webp> --scale <integer >=2> [--filter nearest|lanczos3] [--jpeg-quality <1..100>] [--background <#RRGGBB>]
   perfectpixel edit --request <edit-request.json>
+  perfectpixel psd --request <psd-export-request.json>
   perfectpixel chroma-plan --request <chroma-plan-request.json>
   perfectpixel vector <input.png|jpg|jpeg|webp> --out <output.svg> [--preset auto|pixel-art|legacy-lossless|flat-icon|line-art|bounded-illustration] [--profile compact|motion-structure-ready] [--detail auto|1|2|3|4|5] [--min-quality <0..1>] [--max-quality-loss <0..1>] [--max-paths <positive integer>] [--policy <vector-policy.json>] [--report <evaluation.json>] [--diagnostics <dir>]
   perfectpixel vector-analyze <input.png|jpg|jpeg|webp> [--preset auto|pixel-art|legacy-lossless|flat-icon|line-art|bounded-illustration] [--profile compact|motion-structure-ready] [--policy <vector-policy.json>] [--report <analysis.json>]
@@ -207,6 +209,7 @@ fn cli_original_error(error: &PpError) -> String {
 fn cli_error_phase(args: &[String]) -> &'static str {
     match args.first().map(String::as_str) {
         Some("convert") | Some("upscale") => "asset",
+        Some("psd") => "psd",
         Some("vector") => "vector",
         Some("vector-analyze") => "vectorAnalyze",
         _ => "cli",
@@ -246,6 +249,7 @@ fn run(args: Vec<String>) -> PpResult<String> {
         "convert" => convert(&args[1..]),
         "upscale" => upscale(&args[1..]),
         "edit" => edit(&args[1..]),
+        "psd" => psd(&args[1..]),
         "chroma-plan" => chroma_plan(&args[1..]),
         "vector" => vector(&args[1..]),
         "vector-analyze" => vector_analyze(&args[1..]),
@@ -254,7 +258,7 @@ fn run(args: Vec<String>) -> PpResult<String> {
         "motion-scaffold" => motion_scaffold(&args[1..]),
         "motion-build" => motion_build(&args[1..]),
         other => Err(PpError::InvalidOption(format!(
-            "unknown command '{}'; use schema, inspect, convert, upscale, edit, chroma-plan, vector, vector-analyze, normalize, bundle, motion-scaffold, or motion-build",
+            "unknown command '{}'; use schema, inspect, convert, upscale, edit, psd, chroma-plan, vector, vector-analyze, normalize, bundle, motion-scaffold, or motion-build",
             other
         ))),
     }
@@ -274,6 +278,7 @@ fn schema() -> PpResult<String> {
             "convert",
             "upscale",
             "edit",
+            "psd",
             "chroma-plan",
             "vector",
             "vector-analyze",
@@ -339,6 +344,25 @@ fn schema() -> PpResult<String> {
             filters: &["nearest", "lanczos3"],
             maximum_steps: 64,
             semantic_editing: false,
+        },
+        psd_export_command: PsdExportCommandSchema {
+            request_schema: PSD_EXPORT_SCHEMA,
+            operation: "export_psd",
+            schema_version: 1,
+            required_fields: &["schemaVersion", "operation", "input", "output", "path"],
+            path_required_fields: &["alphaThreshold", "maxKnots"],
+            input: "input raster path (png, jpg, jpeg, or webp)",
+            output: "atomic PSD output path (.psd)",
+            alpha_threshold: "1..=255",
+            recommended_alpha_threshold: PSD_DEFAULT_ALPHA_THRESHOLD,
+            max_knots: "1..=32768",
+            recommended_max_knots: PSD_DEFAULT_MAX_KNOTS,
+            max_dimension: PSD_MAX_DIMENSION,
+            max_knots_limit: PSD_MAX_KNOTS,
+            max_output_bytes: crate::PSD_MAX_OUTPUT_BYTES,
+            preserves: &["RGBA bytes", "soft alpha", "closed even-odd paths"],
+            resources: &["1025 Working Path", "2000 Cutout Path", "2999 clipping path name"],
+            photoshop_native_open: false,
         },
         chroma_plan_schema: CHROMA_PLAN_SCHEMA,
         chroma_plan_command: ChromaPlanCommandSchema {
@@ -558,6 +582,100 @@ fn edit(args: &[String]) -> PpResult<String> {
         },
         "<edit-summary>",
     )
+}
+
+fn psd(args: &[String]) -> PpResult<String> {
+    validate_options(args, &["--request"])?;
+    let request_path = option_path(args, "--request")?;
+    validate_file_extension(&request_path, &["json"], "PSD export request")?;
+    let (request, _request_snapshot): (PsdExportRequest, _) =
+        read_json_request_snapshot(&request_path)?;
+    if request.schema_version != 1 || request.operation != "export_psd" {
+        return Err(PpError::InvalidRequest(
+            "PSD export request schemaVersion must be 1 and operation must be 'export_psd'"
+                .to_owned(),
+        ));
+    }
+    let base_dir = request_path.parent().unwrap_or_else(|| Path::new("."));
+    let input = resolve_psd_path(base_dir, &request.input, "input")?;
+    let output = resolve_psd_path(base_dir, &request.output, "output")?;
+    validate_raster_input_path(&input)?;
+    validate_file_extension(&output, &["psd"], "PSD output")?;
+    reject_same_path(
+        &request_path,
+        &output,
+        "PSD output must not overwrite its request",
+    )?;
+    reject_same_path(&input, &output, "PSD input and output must not collide")?;
+    let (source, _input_snapshot) = decode_raster_snapshot(&input)?;
+    let encoded = crate::encode_psd(
+        &source,
+        crate::PsdPathOptions {
+            alpha_threshold: request.path.alpha_threshold,
+            max_knots: request.path.max_knots,
+        },
+    )?;
+    let output_bytes = encoded.bytes();
+    let output_sha256 = crate::sha256_hex(output_bytes);
+    let output_byte_count = output_bytes.len();
+    let contour_count = encoded.contour_count();
+    let knot_count = encoded.knot_count();
+    AtomicFileWriter::write_bytes(&output, output_bytes)?;
+    serialize_json(
+        &PsdExportSummary {
+            schema: PSD_EXPORT_SCHEMA,
+            schema_version: 1,
+            ok: true,
+            operation: "export_psd",
+            input: input.display().to_string(),
+            output: output.display().to_string(),
+            width: source.width(),
+            height: source.height(),
+            channels: 4,
+            depth: 8,
+            color_mode: "RGB",
+            alpha_threshold: request.path.alpha_threshold,
+            max_knots: request.path.max_knots,
+            contour_count,
+            knot_count,
+            output_sha256,
+            output_byte_count,
+            flattened: true,
+            photoshop_native_open: false,
+        },
+        "<psd-export-summary>",
+    )
+}
+
+fn resolve_psd_path(base_dir: &Path, value: &str, label: &str) -> PpResult<PathBuf> {
+    if value.trim().is_empty()
+        || value != value.trim()
+        || value.contains('\0')
+        || value.contains('\\')
+    {
+        return Err(PpError::InvalidRequest(format!(
+            "PSD {label} path must be a non-empty printable path"
+        )));
+    }
+    if value.len() > 4096 {
+        return Err(PpError::InvalidRequest(format!(
+            "PSD {label} path exceeds 4096 bytes"
+        )));
+    }
+    let path = Path::new(value);
+    if path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(PpError::InvalidRequest(format!(
+            "PSD {label} path must not contain '..'"
+        )));
+    }
+    Ok(if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        base_dir.join(path)
+    })
 }
 
 const EDIT_SCHEMA: &str = "perfectpixel.image-edit/1";
@@ -2688,6 +2806,7 @@ struct SchemaPayload {
     vector_profiles: &'static [&'static str],
     asset_adapter: AssetAdapterSchema,
     edit_command: EditCommandSchema,
+    psd_export_command: PsdExportCommandSchema,
     vector_command: VectorCommandSchema,
     vector_analyze_command: VectorAnalyzeCommandSchema,
     vector_authority: &'static str,
@@ -2704,6 +2823,28 @@ struct EditCommandSchema {
     filters: &'static [&'static str],
     maximum_steps: usize,
     semantic_editing: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PsdExportCommandSchema {
+    request_schema: &'static str,
+    operation: &'static str,
+    schema_version: u32,
+    required_fields: &'static [&'static str],
+    path_required_fields: &'static [&'static str],
+    input: &'static str,
+    output: &'static str,
+    alpha_threshold: &'static str,
+    recommended_alpha_threshold: u8,
+    max_knots: &'static str,
+    recommended_max_knots: usize,
+    max_dimension: u32,
+    max_knots_limit: usize,
+    max_output_bytes: usize,
+    preserves: &'static [&'static str],
+    resources: &'static [&'static str],
+    photoshop_native_open: bool,
 }
 
 #[derive(Serialize)]
@@ -2858,6 +2999,47 @@ struct EditRequest {
     input: String,
     output: String,
     steps: Vec<EditStep>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PsdExportRequest {
+    schema_version: u32,
+    operation: String,
+    input: String,
+    output: String,
+    path: PsdPathRequest,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PsdPathRequest {
+    alpha_threshold: u8,
+    max_knots: usize,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PsdExportSummary {
+    schema: &'static str,
+    schema_version: u32,
+    ok: bool,
+    operation: &'static str,
+    input: String,
+    output: String,
+    width: u32,
+    height: u32,
+    channels: u16,
+    depth: u16,
+    color_mode: &'static str,
+    alpha_threshold: u8,
+    max_knots: usize,
+    contour_count: usize,
+    knot_count: usize,
+    output_sha256: String,
+    output_byte_count: usize,
+    flattened: bool,
+    photoshop_native_open: bool,
 }
 
 #[derive(Deserialize)]

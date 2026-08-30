@@ -139,7 +139,7 @@
             <article class="card"><span class="number">01 / INSPECT</span><h3>먼저 확인</h3><p>이미지의 크기·형식·투명도처럼 작업 전에 알아야 할 사실을 JSON으로 확인합니다.</p></article>
             <article class="card"><span class="number">02 / CONVERT</span><h3>필요한 모양으로 변환</h3><p>PNG·JPEG·WebP를 바꾸거나 크기를 조절합니다. 픽셀 아트에는 흐려지지 않는 확대 방식도 있습니다.</p></article>
             <article class="card"><span class="number">03 / BUNDLE</span><h3>스프라이트로 묶기</h3><p>여러 프레임을 정리해 아틀라스, 매니페스트, Aseprite JSON까지 한 묶음으로 만듭니다.</p></article>
-            <article class="card"><span class="number">04 / VECTOR + MOTION</span><h3>조건을 확인한 뒤 SVG·모션</h3><p>무조건 벡터로 바꾸지 않습니다. 품질 조건을 통과한 경우에만 최종 SVG를 만듭니다.</p></article>
+            <article class="card"><span class="number">04 / PSD + VECTOR + MOTION</span><h3>편집 가능한 결과로 마무리</h3><p>투명도를 보존한 PSD와 품질 조건을 통과한 SVG·모션 파일을 만듭니다. PSD 경로도 함께 기록됩니다.</p></article>
           </div>
         </section>
 
@@ -173,6 +173,7 @@
           </div>
           <div class="code" aria-label="터미널 사용 예시"><pre><code><b>perfectpixel inspect</b> art/input.png
 <b>perfectpixel upscale</b> sprites/idle.png --out sprites/idle@2x.png --scale 2
+<b>perfectpixel psd</b> --request image-psd-request.json
 <b>perfectpixel vector</b> icon.png --out icon.svg --preset flat-icon --profile compact</code></pre></div>
         </section>
       </main>

@@ -38,6 +38,7 @@ perfectpixel inspect <input.png|jpg|jpeg|webp>
 perfectpixel convert <input.png|jpg|jpeg|webp> --out <output.png|jpg|jpeg|webp> [--width <positive integer>] [--height <positive integer>] [--filter nearest|lanczos3] [--jpeg-quality <1..100>] [--background <#RRGGBB>]
 perfectpixel upscale <input.png|jpg|jpeg|webp> --out <output.png|jpg|jpeg|webp> --scale <integer >=2> [--filter nearest|lanczos3] [--jpeg-quality <1..100>] [--background <#RRGGBB>]
 perfectpixel edit --request <edit-request.json>
+perfectpixel psd --request <psd-export-request.json>
 perfectpixel chroma-plan --request <chroma-plan-request.json>
 perfectpixel normalize --request <normalize-request.json> --out-dir <dir>
 perfectpixel bundle --request <sprite-request.json> --out-dir <dir>
@@ -135,6 +136,48 @@ names, and output SHA-256. When an auto step runs, `autoBackground` additionally
 bounded `selectedKeys` and integer `edgeCoverageBasisPoints` in execution order. The output bytes
 are committed through the same-directory atomic writer only after parsing, input snapshot, and all
 pure transforms succeed. Failure before the rename leaves an existing destination unchanged.
+
+## PSD Export Contract
+
+`psd` is a strict local export boundary for a flattened Photoshop document. It reads one
+PNG/JPG/JPEG/WebP raster and publishes one `.psd` through the same single-file atomic writer
+used by the raster adapter. The request schema is `perfectpixel.photoshop-export/1` and
+rejects unknown fields:
+
+```json
+{
+  "schemaVersion": 1,
+  "operation": "export_psd",
+  "input": "source.png",
+  "output": "source.psd",
+  "path": { "alphaThreshold": 128, "maxKnots": 8192 }
+}
+```
+
+`input` and `output` are resolved relative to the request file when they are not absolute.
+The input must use a supported raster extension and the output must use `.psd`. The output
+must not collide with the request or input. Paths must not contain NUL, backslash, or `..`
+components, are bounded to 4096 bytes, and output is capped at 64 MiB.
+`path.alphaThreshold` is an integer from 1 through 255 and
+`path.maxKnots` is an integer from 1 through 32768; the recommended values are 128 and
+8192, respectively. Invalid, empty, or over-complex paths fail before publication and keep
+an existing destination byte-for-byte unchanged.
+
+The PSD is version 1, 8-bit RGB, with four raw planar channels in R/G/B/A order. Every RGBA
+byte, including soft alpha, is preserved exactly; the document is deliberately flattened
+and contains no layer, PSB, CMYK, 16-bit, or generative claims. Alpha pixels at or above the
+threshold form hard-edge, closed contours. Four-connected foreground components and holes
+are retained, contours are sorted deterministically, and exactly collinear vertices are
+removed. The path fill rule is even/odd, and every knot is an unlinked selector-2 record
+with equal preceding control, anchor, and leaving control points. Coordinates are normalized
+to Photoshop's 8.24 fixed-point format with vertical components first.
+
+The image resources contain 8BIM IDs 1025 (`Working Path`) and 2000 (`Cutout Path`) with the
+same path data, plus ID 2999 naming `Cutout Path`, flatness 1.0 in 16.16 fixed point, and
+fill rule 1 (even/odd). The CLI emits one `perfectpixel.photoshop-export/1` evidence object
+with dimensions, channel/depth/mode facts, contour and knot counts, output byte count, and
+SHA-256. Photoshop-native opening and Paths-panel UI behavior are environment evidence, not
+claimed by the local implementation tests.
 
 ## Chroma Plan Contract
 

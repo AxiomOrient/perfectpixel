@@ -22,7 +22,7 @@ Start with the root [README](../README.md) for scope and primary commands, then 
 
 ## Ownership map
 
-- `core` owns format-independent raster transforms, shared SVG parsing, and content digests.
+- `core` owns format-independent raster transforms, deterministic PSD encoding, shared SVG parsing, and content digests.
 - `vector` owns route selection, candidate evaluation, and SVG quality gates.
 - `adapters::sprite` owns normalization, atlas packing, manifest, and Aseprite export.
 - `adapters::motion` owns SVG parts and transform/opacity animation compilation.
