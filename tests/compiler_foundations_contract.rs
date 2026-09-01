@@ -68,7 +68,7 @@ fn exact_verification_is_machine_readable_and_fails_closed() -> Result<(), Box<d
         ],
     };
 
-    let report = verify_raster_exact(&spec, &raster, &pixel_spec, None);
+    let report = verify_raster_exact(&spec, &raster, &pixel_spec, None)?;
     assert!(!report.ok);
     assert_eq!(report.checks.len(), 3);
     assert!(report.checks[0].passed);
