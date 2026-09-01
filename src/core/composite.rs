@@ -1,6 +1,9 @@
+use serde::{Deserialize, Serialize};
+
 use super::{linear16_to_srgb8, srgb8_to_linear16, PpError, PpResult, Raster};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum BlendMode {
     Normal,
     Multiply,
@@ -59,9 +62,6 @@ fn composite_pixel(backdrop: &[u8], source: &[u8], output: &mut [u8], blend: Ble
         let cb = u32::from(srgb8_to_linear16(backdrop[channel]));
         let cs = u32::from(srgb8_to_linear16(source[channel]));
         let blended = blend_channel(cb, cs, blend);
-
-        // W3C blending followed by Porter-Duff source-over:
-        // co = as*(1-ab)*Cs + as*ab*B(Cb,Cs) + (1-as)*ab*Cb
         let source_uncovered = mul_u16(alpha_source, 65_535 - alpha_backdrop);
         let source_overlap = mul_u16(alpha_source, alpha_backdrop);
         let backdrop_remaining = mul_u16(one_minus_source, alpha_backdrop);
