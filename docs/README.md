@@ -10,6 +10,7 @@ PerfectPixel is documented as one deterministic image-asset compiler and verific
 | Implemented authority/effect/module boundaries | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | Trace every public command to its owner | [FUNCTION_MATRIX.md](FUNCTION_MATRIX.md) |
 | See the 2026-09-01 roadmap closure and deliberate exclusions | [ROADMAP_COMPLETION_2026-09-01.md](ROADMAP_COMPLETION_2026-09-01.md) |
+| Run the final target-Mac verification | [LOCAL_VERIFICATION_HANDOFF.md](LOCAL_VERIFICATION_HANDOFF.md) |
 | Configure the fixed-root local MCP adapter | [MCP_CONTRACT.md](MCP_CONTRACT.md) |
 | Author or compile motion | [MOTION_CONTRACT.md](MOTION_CONTRACT.md) |
 | Maintain normalization review invariants | [NORMALIZE_REVIEW_CONTRACT.md](NORMALIZE_REVIEW_CONTRACT.md) |
