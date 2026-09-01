@@ -22,14 +22,16 @@ The Rust crate is `cfg(unix)` only. Non-Unix targets fail at compilation. Apple 
 `Operation` and `OperationRegistry` own operation identity, risk, side-effect class, capabilities, and timeout metadata.
 
 ```text
-CLI parser ──┐
-             ├── typed Operation -> implementation
-MCP DTO ─────┘
+CLI parser ---------> Operation ─┐
+                                 ├── application dispatch
+MCP typed *Params --> Operation ─┘
 ```
 
-`ApplicationRequest` is an MCP/programmatic transport DTO only. It converts directly to `Operation`; it does not reconstruct argv or enter the CLI parser.
+There is no intermediate `ApplicationRequest`, argv reconstruction, or CLI-parser re-entry. MCP `*Params` are protocol-local DTOs only. Root/path validation remains an MCP adapter responsibility; semantic scalar validation uses canonical PerfectPixel constructors/parsers before the `Operation` executes.
 
 CLI and MCP inventories may differ. When an operation is exposed through both transports, both reach the same `Operation` implementation and neither transport may redefine success, retryability, publication, or domain validation.
+
+`OperationRegistry` is also the single timeout metadata authority for external operations. Application dispatch passes the registry timeout into the Effect request; handlers do not own parallel timeout constants.
 
 ## Public CLI commands
 
@@ -52,7 +54,7 @@ perfectpixel motion-scaffold <input.svg> --out-dir <dir>
 perfectpixel motion-build --request <motion-request.json> --out-dir <dir>
 ```
 
-`perfectpixel schema` is the machine-readable capability surface. `--help` is presentation only.
+`perfectpixel schema` is the machine-readable capability surface. `--help` is presentation only. The schema identifies external inference as an Effect capability rather than claiming that the compiler itself is an inference model.
 
 ## Artifact and pixel contract
 
@@ -60,7 +62,9 @@ perfectpixel motion-build --request <motion-request.json> --out-dir <dir>
 
 Current raster storage is RGBA8. `PixelSpec` explicitly records pixel format, alpha mode, and color semantics. Missing embedded color provenance remains `ColorSpec::Unknown`; it is never silently promoted to sRGB.
 
-Embedded ICC bytes are retained and bound to their digest. This dependency-minimal release does not embed an ICC conversion engine. A path requiring ICC conversion returns explicit `Unsupported` rather than silently changing color semantics. An unprofiled source may be accepted only when the request explicitly declares the color semantics required by that operation.
+Embedded ICC bytes are retained and bound to their digest. This release does not expose an ICC conversion API. A path requiring conversion from an embedded profile returns explicit `Unsupported` rather than silently changing color semantics. An unprofiled source may be accepted only when the request explicitly declares the color semantics required by that operation.
+
+The textual `#RRGGBB` matte syntax is parsed by the shared core sRGB8 literal parser; CLI and MCP do not maintain independent color-literal rules.
 
 ## Verification contract
 
@@ -76,7 +80,7 @@ Supported verification includes:
 - vector SVG safety/topology/render-back/quality gates;
 - layered PSD structural readback against PerfectPixel-owned document semantics.
 
-A candidate that cannot be verified does not publish.
+There is no unused verification-profile selector in the public API. A concrete operation constructs the assertions it requires. A candidate that cannot be verified does not publish.
 
 ## Raster operations
 
@@ -92,7 +96,7 @@ A candidate that cannot be verified does not publish.
 
 ### `psd`
 
-`psd` is the compatibility flattened PSD v1 surface. It preserves the bounded existing export contract and does not claim layered document semantics.
+`psd` is the single-raster flattened PSD v1 export. It preserves its bounded raster/path export semantics and does not claim layered document semantics.
 
 ### `document-psd`
 
@@ -113,6 +117,8 @@ request snapshot
 ```
 
 `DocumentIR` owns layer/group/mask semantics. The PSD adapter owns byte encoding only. The adapter cannot replace PerfectPixel's merged appearance with an independently rendered success decision.
+
+ICC-tagged DocumentIR raster bindings preserve profile provenance but return explicit `Unsupported` because no ICC transform authority exists in 0.3.1.
 
 ## Sprite contracts
 
@@ -136,6 +142,8 @@ Normalized/bundled sets publish through the recoverable artifact-set transaction
 - verification thresholds.
 
 `normal_map` requires UASTC. `color_srgb` uses explicit CIEDE2000 thresholds. Linear, normal-map, and mask semantics use explicit maximum absolute-channel error.
+
+ICC-tagged input is provenance-checked but explicitly unsupported until a real profile transform engine exists. Unprofiled input must explicitly declare the color semantics required by the texture semantic.
 
 The flow is:
 
@@ -218,7 +226,7 @@ Cancelled
 
 Timeout is an explicit failure category. Process Effects own a process group; cancellation and timeout terminate and reap the group before returning completion. `EffectIdentity` prevents stale results from changing current artifact state.
 
-MCP cancellation is a separate transport boundary: cancelling an in-process MCP call does not force-stop an already executing synchronous publication worker. Its admission permit remains owned until that worker completes, preserving the existing MCP compatibility contract.
+MCP cancellation is a separate transport boundary: cancelling an in-process MCP call does not force-stop an already executing synchronous publication worker. Its admission permit remains owned until that worker completes. This protects the in-process publication transaction from transport-future cancellation and does not weaken cancellation of external process Effects.
 
 ## Publication contract
 
@@ -246,7 +254,7 @@ Retryability is explicit where the Effect boundary can determine it. A failure i
 
 The following roadmap candidates are not hidden partial features and are not part of this release:
 
-- embedded ICC conversion engine;
+- embedded ICC conversion engine or public ICC transform API;
 - SSIMULACRA2 dependency;
 - external VTracer route;
 - SAM/promptable segmentation;
