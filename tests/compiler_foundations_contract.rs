@@ -31,9 +31,7 @@ fn pixel_spec_requires_explicit_alpha_and_color_semantics() -> Result<(), Box<dy
     let spec = PixelSpec::new(
         PixelFormat::Rgba8,
         AlphaMode::Premultiplied,
-        ColorSpec::Icc {
-            digest: digest.clone(),
-        },
+        ColorSpec::Icc { digest: digest.clone() },
     );
     let encoded = serde_json::to_value(&spec)?;
     let decoded: PixelSpec = serde_json::from_value(encoded)?;
@@ -54,19 +52,12 @@ fn exact_verification_is_machine_readable_and_fails_closed() -> Result<(), Box<d
     let expected_digest = Sha256Digest::from_bytes(b"expected-output");
     let spec = VerificationSpec {
         exact: vec![
-            ExactAssertion::Dimensions {
-                width: 2,
-                height: 1,
-            },
-            ExactAssertion::AlphaBounds {
-                minimum: 0,
-                maximum: 255,
-            },
-            ExactAssertion::ArtifactSha256 {
-                expected: expected_digest,
-            },
+            ExactAssertion::Dimensions { width: 2, height: 1 },
+            ExactAssertion::AlphaBounds { minimum: 0, maximum: 255 },
+            ExactAssertion::ArtifactSha256 { expected: expected_digest },
         ],
         perceptual: Vec::new(),
+        regions: Vec::new(),
     };
 
     let report = verify_raster_exact(&spec, &raster, &pixel_spec, None)?;
@@ -76,6 +67,10 @@ fn exact_verification_is_machine_readable_and_fails_closed() -> Result<(), Box<d
     assert!(report.exact[1].passed);
     assert!(!report.exact[2].passed);
     assert!(report.perceptual.is_empty());
+    assert!(report.regions.is_empty());
     assert!(serde_json::to_value(report)?.is_object());
+
+    let empty = VerificationSpec::default();
+    assert!(verify_raster_exact(&empty, &raster, &pixel_spec, None).is_err());
     Ok(())
 }
