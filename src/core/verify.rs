@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{ArtifactRef, PixelSpec, Raster, Sha256Digest};
+use super::{ArtifactRef, PixelSpec, PpError, PpResult, Raster, Sha256Digest};
 
 pub const VERIFICATION_REPORT_SCHEMA: &str = "perfectpixel.verification-report/1";
 
@@ -8,6 +8,27 @@ pub const VERIFICATION_REPORT_SCHEMA: &str = "perfectpixel.verification-report/1
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct VerificationSpec {
     pub exact: Vec<ExactAssertion>,
+}
+
+impl VerificationSpec {
+    pub fn validate(&self) -> PpResult<()> {
+        for assertion in &self.exact {
+            match assertion {
+                ExactAssertion::Dimensions { width, height } if *width == 0 || *height == 0 => {
+                    return Err(PpError::InvalidRequest(
+                        "verification dimensions must be positive".to_string(),
+                    ));
+                }
+                ExactAssertion::AlphaBounds { minimum, maximum } if minimum > maximum => {
+                    return Err(PpError::InvalidRequest(
+                        "verification alpha minimum must not exceed maximum".to_string(),
+                    ));
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,7 +70,8 @@ pub fn verify_raster_exact(
     raster: &Raster,
     pixel_spec: &PixelSpec,
     artifact: Option<&ArtifactRef>,
-) -> VerificationReport {
+) -> PpResult<VerificationReport> {
+    spec.validate()?;
     let observed_alpha = alpha_bounds(raster);
     let mut checks = Vec::with_capacity(spec.exact.len());
 
@@ -90,11 +112,11 @@ pub fn verify_raster_exact(
         });
     }
 
-    VerificationReport {
+    Ok(VerificationReport {
         schema: VERIFICATION_REPORT_SCHEMA,
         ok: checks.iter().all(|check| check.passed),
         checks,
-    }
+    })
 }
 
 fn alpha_bounds(raster: &Raster) -> (u8, u8) {
@@ -136,7 +158,7 @@ mod tests {
             ],
         };
 
-        let report = verify_raster_exact(&spec, &raster, &pixel_spec, Some(&artifact));
+        let report = verify_raster_exact(&spec, &raster, &pixel_spec, Some(&artifact))?;
         assert!(report.ok);
         assert_eq!(report.checks.len(), 4);
         Ok(())
@@ -152,9 +174,23 @@ mod tests {
             }],
         };
 
-        let report = verify_raster_exact(&spec, &raster, &pixel_spec, None);
+        let report = verify_raster_exact(&spec, &raster, &pixel_spec, None)?;
         assert!(!report.ok);
         assert!(!report.checks[0].passed);
+        Ok(())
+    }
+
+    #[test]
+    fn verification_spec_rejects_invalid_bounds() -> crate::PpResult<()> {
+        let raster = Raster::blank(1, 1)?;
+        let pixel_spec = PixelSpec::new(PixelFormat::Rgba8, AlphaMode::Straight, ColorSpec::Unknown);
+        let spec = VerificationSpec {
+            exact: vec![ExactAssertion::AlphaBounds {
+                minimum: 200,
+                maximum: 100,
+            }],
+        };
+        assert!(verify_raster_exact(&spec, &raster, &pixel_spec, None).is_err());
         Ok(())
     }
 }
