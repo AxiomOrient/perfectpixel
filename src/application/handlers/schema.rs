@@ -19,7 +19,7 @@ pub(super) fn schema() -> PpResult<String> {
             cli_version: env!("CARGO_PKG_VERSION"),
             inspect_schema: "perfectpixel.asset-inspection/1",
             role: "deterministic-asset-compiler",
-            model_inference: false,
+            external_inference_effects: true,
             network_required: false,
             publication_policy: "evaluate-before-publish",
             commands: &[
@@ -254,7 +254,7 @@ struct SchemaPayload {
     cli_version: &'static str,
     inspect_schema: &'static str,
     role: &'static str,
-    model_inference: bool,
+    external_inference_effects: bool,
     network_required: bool,
     publication_policy: &'static str,
     commands: &'static [&'static str],
