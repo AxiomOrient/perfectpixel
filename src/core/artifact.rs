@@ -1,6 +1,6 @@
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 
-use super::{sha256_hex, PpError, PpResult};
+use super::{PpError, PpResult};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Sha256Digest(String);
@@ -17,7 +17,7 @@ impl Sha256Digest {
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Self {
-        Self(sha256_hex(bytes))
+        Self(super::sha256::sha256_hex(bytes))
     }
 
     pub fn as_str(&self) -> &str {
