@@ -1,4 +1,5 @@
 mod alpha;
+mod alpha_math;
 mod artifact;
 mod chroma;
 mod color;
@@ -16,6 +17,7 @@ mod transform;
 mod verify;
 
 pub use alpha::*;
+pub use alpha_math::*;
 pub use artifact::*;
 pub use chroma::*;
 pub use color::*;
