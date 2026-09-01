@@ -1,9 +1,13 @@
+mod external;
+
+pub use external::*;
+
 use serde::{Deserialize, Serialize};
 
 use crate::Sha256Digest;
 
-/// Identity assigned by the runtime before an external effect starts. `generation` is owned by
-/// the caller/state machine; core does not invent time- or randomness-based identity.
+/// Identity assigned before asynchronous/external work starts. The caller owns `generation`;
+/// Effects cannot invent time- or randomness-based authority.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EffectIdentity {
@@ -34,6 +38,15 @@ pub struct EffectFailure {
     pub dependency: String,
     pub retryable: bool,
     pub cause: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub context: Vec<EffectFailureContext>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EffectFailureContext {
+    pub key: String,
+    pub value: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,8 +72,8 @@ pub enum EffectCompletion<T> {
     Cancelled,
 }
 
-/// External work is allowed to produce only a Result/Event. The caller decides whether this event
-/// still belongs to the current state before any artifact or domain state can change.
+/// External work may return only an Event. The owner compares identity before changing state or
+/// publishing an artifact, so stale/duplicate completion cannot mutate the latest generation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EffectResult<T> {
