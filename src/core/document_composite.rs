@@ -223,8 +223,8 @@ mod tests {
     #[test]
     fn missing_artifact_fails_closed() -> PpResult<()> {
         let missing = ArtifactRef::new(
-            "image/png",
             Sha256Digest::from_bytes(b"missing"),
+            "image/png",
             7,
         )?;
         let document = Document::new(
