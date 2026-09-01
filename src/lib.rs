@@ -46,16 +46,17 @@ pub use core::sha256::{is_sha256_hex, sha256, sha256_hex};
 #[cfg(unix)]
 pub use core::{
     apply_raster_edits, apply_raster_edits_with_evidence, composite_source_over_linear_srgb,
-    content_bbox, decontaminate_known_background, encode_psd, inspect_raster, oklab_distance,
-    plan_chroma, plan_remove_background_auto, resize_raster, verify_raster_exact, AlphaHistogram,
-    AlphaMode, ArtifactRef, AutoBackgroundPlan, BlendMode, ChromaCandidateScore, ChromaPlan,
-    ColorSpec, ConnectedComponent, EdgePaletteEntry, ExactAssertion, FrameRect, Mask, PixelFormat,
-    PixelSpec, Point, Point2, PpError, PpResult, PsdEncoded, PsdPathOptions, Raster, RasterEdit,
-    RasterInspection, Rect2, ResampleFilter, Sha256Digest, Size, SvgContract, SvgReport, Transform3,
-    VerificationCheck, VerificationEvidence, VerificationReport, VerificationSpec,
-    CHROMA_CANDIDATE_PALETTE, CHROMA_PLAN_METRIC, CHROMA_PLAN_SCHEMA, PSD_DEFAULT_ALPHA_THRESHOLD,
-    PSD_DEFAULT_MAX_KNOTS, PSD_EXPORT_SCHEMA, PSD_MAX_DIMENSION, PSD_MAX_KNOTS,
-    PSD_MAX_OUTPUT_BYTES, VERIFICATION_REPORT_SCHEMA,
+    content_bbox, decontaminate_known_background, delta_e2000, encode_psd, inspect_raster,
+    linear16_to_srgb8, oklab_distance, plan_chroma, plan_remove_background_auto, resize_raster,
+    srgb8_to_lab, srgb8_to_linear16, verify_raster, verify_raster_exact, AlphaHistogram, AlphaMode,
+    ArtifactRef, AutoBackgroundPlan, BlendMode, ChromaCandidateScore, ChromaPlan, ColorSpec,
+    ConnectedComponent, EdgePaletteEntry, ExactAssertion, ExactCheck, ExactEvidence, FrameRect, Lab,
+    Mask, PerceptualAssertion, PerceptualCheck, PerceptualEvidence, PixelFormat, PixelSpec, Point,
+    Point2, PpError, PpResult, PsdEncoded, PsdPathOptions, Raster, RasterEdit, RasterInspection,
+    Rect2, ResampleFilter, Sha256Digest, Size, SvgContract, SvgReport, Transform3,
+    VerificationReport, VerificationSpec, CHROMA_CANDIDATE_PALETTE, CHROMA_PLAN_METRIC,
+    CHROMA_PLAN_SCHEMA, PSD_DEFAULT_ALPHA_THRESHOLD, PSD_DEFAULT_MAX_KNOTS, PSD_EXPORT_SCHEMA,
+    PSD_MAX_DIMENSION, PSD_MAX_KNOTS, PSD_MAX_OUTPUT_BYTES, VERIFICATION_REPORT_SCHEMA,
 };
 #[cfg(unix)]
 pub use effects::{
