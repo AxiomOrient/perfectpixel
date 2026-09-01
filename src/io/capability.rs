@@ -8,6 +8,18 @@ use std::path::{Component, Path};
 const CREATE_MODE: libc::mode_t = 0o600;
 const DIRECTORY_MODE: libc::mode_t = 0o755;
 
+pub(crate) struct RenameCommit {
+    from_parent: File,
+    to_parent: File,
+}
+
+impl RenameCommit {
+    pub(crate) fn sync(self) -> io::Result<()> {
+        sync_directory_handle(&self.from_parent)?;
+        sync_directory_handle(&self.to_parent)
+    }
+}
+
 /// Opens a filesystem object without following any symlink component.
 /// Resolution starts from an already-open `/` or cwd directory and every
 /// descendant component is resolved with `openat(O_NOFOLLOW)`.
@@ -54,7 +66,7 @@ pub(crate) fn create_directory_new(path: &Path) -> io::Result<File> {
 
 pub(crate) fn create_new(path: &Path) -> io::Result<File> {
     let (parent, name) = open_parent(path, true)?;
-    let file = openat_file(
+    openat_file(
         parent.as_raw_fd(),
         &name,
         libc::O_WRONLY
@@ -63,8 +75,7 @@ pub(crate) fn create_new(path: &Path) -> io::Result<File> {
             | libc::O_NOFOLLOW
             | libc::O_CLOEXEC,
         CREATE_MODE,
-    )?;
-    Ok(file)
+    )
 }
 
 pub(crate) fn open_lock(path: &Path) -> io::Result<File> {
@@ -77,7 +88,9 @@ pub(crate) fn open_lock(path: &Path) -> io::Result<File> {
     )
 }
 
-pub(crate) fn rename(from: &Path, to: &Path) -> io::Result<()> {
+/// Performs only the visible namespace commit and returns the exact opened
+/// parent capabilities that must be synchronized to make that rename durable.
+pub(crate) fn rename_visible(from: &Path, to: &Path) -> io::Result<RenameCommit> {
     let (from_parent, from_name) = open_parent(from, false)?;
     let (to_parent, to_name) = open_parent(to, true)?;
     let from_name = c_string(&from_name)?;
@@ -93,8 +106,14 @@ pub(crate) fn rename(from: &Path, to: &Path) -> io::Result<()> {
     if result != 0 {
         return Err(io::Error::last_os_error());
     }
-    sync_directory_handle(&from_parent)?;
-    sync_directory_handle(&to_parent)
+    Ok(RenameCommit {
+        from_parent,
+        to_parent,
+    })
+}
+
+pub(crate) fn rename(from: &Path, to: &Path) -> io::Result<()> {
+    rename_visible(from, to)?.sync()
 }
 
 pub(crate) fn remove_file(path: &Path) -> io::Result<()> {
@@ -182,7 +201,11 @@ fn open_parent(path: &Path, create_parent: bool) -> io::Result<(File, OsString)>
 }
 
 fn anchor_and_components(path: &Path) -> io::Result<(File, Vec<OsString>)> {
-    let anchor = if path.is_absolute() { Path::new("/") } else { Path::new(".") };
+    let anchor = if path.is_absolute() {
+        Path::new("/")
+    } else {
+        Path::new(".")
+    };
     let mut components = Vec::new();
     for component in path.components() {
         match component {
