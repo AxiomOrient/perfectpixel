@@ -518,7 +518,7 @@ fn preflight_vector_parent(path: &Path) -> PpResult<()> {
 }
 
 fn preflight_diagnostic_entries(entries: &[AtomicDirectoryEntry<'_>]) -> PpResult<()> {
-    if entries.len() > MAX_VECTOR_DIAGNOSTIC_ENTRIES + 1 {
+    if entries.len() > MAX_VECTOR_DIAGNOSTIC_ENTRIES {
         return Err(PpError::FileIo {
             path: PathBuf::from("<diagnostics>"),
             message: "too many directory entries".to_string(),
