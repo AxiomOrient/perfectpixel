@@ -104,11 +104,17 @@ fn ktx_arguments(
         } else {
             "R8G8B8A8_UNORM".to_string()
         },
+        // PerfectPixel already owns source color semantics. The generated PNG is merely an
+        // external-Effect carrier, so tell KTX exactly how to interpret it rather than allowing
+        // the tool to infer/convert transfer characteristics from incidental PNG metadata.
+        "--assign-tf".to_string(),
+        if srgb { "srgb".to_string() } else { "linear".to_string() },
         "--encode".to_string(),
         encoding.cli_value().to_string(),
         "--threads".to_string(),
         "1".to_string(),
         "--fail-on-color-conversions".to_string(),
+        "--fail-on-origin-changes".to_string(),
     ];
     if generate_mipmaps {
         args.extend([
@@ -563,11 +569,26 @@ mod tests {
             true,
         );
         assert!(args.windows(2).any(|pair| pair == ["--threads", "1"]));
+        assert!(args.windows(2).any(|pair| pair == ["--assign-tf", "srgb"]));
         assert!(args
             .iter()
             .any(|value| value == "--fail-on-color-conversions"));
+        assert!(args.iter().any(|value| value == "--fail-on-origin-changes"));
         assert!(args.iter().any(|value| value == "--generate-mipmap"));
         assert!(args.iter().any(|value| value == "uastc-ldr-4x4"));
+    }
+
+    #[test]
+    fn ktx_linear_semantics_are_assigned_not_inferred() {
+        let args = ktx_arguments(
+            Path::new("/tmp/in.png"),
+            Path::new("/tmp/out.ktx2"),
+            KtxEncoding::BasisLz,
+            false,
+            false,
+        );
+        assert!(args.windows(2).any(|pair| pair == ["--assign-tf", "linear"]));
+        assert!(args.windows(2).any(|pair| pair == ["--format", "R8G8B8A8_UNORM"]));
     }
 
     #[test]
