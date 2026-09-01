@@ -1,3 +1,4 @@
+#[path = "artifact_set_clean.rs"]
 mod artifact_set;
 mod atomic;
 mod capability;
