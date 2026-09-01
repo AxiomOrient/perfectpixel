@@ -4,10 +4,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     inspect_ktx2, transform_icc_rgba8_to_srgb, verify_ktx2_contract, verify_raster,
-    AlphaMode, ArtifactRef, AtomicFileWriter, ColorSpec, EffectCompletion, EffectIdentity,
-    ExactAssertion, FilePrecondition, ImageCodec, Ktx2EffectRequest, Ktx2ExtractRequest,
-    KtxEncoding, PerceptualAssertion, PixelFormat, PixelSpec, PngEncoder, PpError, PpResult,
-    Sha256Digest, TextureSemantic, VerificationSpec,
+    AlphaMode, ArtifactRef, AtomicFileWriter, ColorSpec, DeltaEThresholds, EffectCompletion,
+    EffectIdentity, ExactAssertion, FilePrecondition, ImageCodec, Ktx2EffectRequest,
+    Ktx2ExtractRequest, KtxEncoding, PerceptualAssertion, PixelFormat, PixelSpec, PngEncoder,
+    PpError, PpResult, Sha256Digest, TextureSemantic, VerificationSpec,
 };
 use crate::runtime::{CancellationFlag, PinnedExecutable};
 
@@ -184,15 +184,21 @@ fn normalize_source(
                 ));
             }
             if declared.color != decoded.color || digest != &Sha256Digest::from_bytes(profile) {
-                return Err(PpError::InvalidRequest(
-                    "texture input ICC provenance does not match declared PixelSpec".to_string(),
-                ));
+                return Err(PpError::PreconditionFailed {
+                    operation: OPERATION.to_string(),
+                    cause: "texture input ICC provenance does not match declared PixelSpec".to_string(),
+                });
             }
-            let (converted, pixel, _receipt) = transform_icc_rgba8_to_srgb(&raster, &decoded, profile)?;
+            let (converted, pixel, _receipt) =
+                transform_icc_rgba8_to_srgb(&raster, &decoded, profile)?;
             Ok((converted, pixel))
         }
         (ColorSpec::Unknown, None) => {
-            let required = if semantic.is_srgb() { ColorSpec::Srgb } else { ColorSpec::LinearSrgb };
+            let required = if semantic.is_srgb() {
+                ColorSpec::Srgb
+            } else {
+                ColorSpec::LinearSrgb
+            };
             if declared.color != required {
                 return Err(PpError::InvalidRequest(format!(
                     "texture semantic {semantic:?} requires an explicit {required:?} declaration when no ICC profile is embedded"
@@ -213,15 +219,18 @@ fn verify_roundtrip(
     request: &TextureCompileRequest,
 ) -> PpResult<crate::VerificationReport> {
     if request.semantic.is_srgb() {
-        let minimum = request.verification.ssimulacra2_minimum_milli.ok_or_else(|| {
+        let thresholds = request.verification.delta_e2000.ok_or_else(|| {
             PpError::InvalidRequest(
-                "color_srgb texture verification requires ssimulacra2MinimumMilli".to_string(),
+                "color_srgb texture verification requires deltaE2000 thresholds".to_string(),
             )
         })?;
         return verify_raster(
             &VerificationSpec {
-                exact: vec![ExactAssertion::Dimensions { width: source.width(), height: source.height() }],
-                perceptual: vec![PerceptualAssertion::Ssimulacra2 { minimum_milli: minimum }],
+                exact: vec![ExactAssertion::Dimensions {
+                    width: source.width(),
+                    height: source.height(),
+                }],
+                perceptual: vec![PerceptualAssertion::DeltaE2000 { thresholds }],
                 regions: Vec::new(),
             },
             roundtrip,
@@ -242,7 +251,13 @@ fn verify_roundtrip(
             cause: "KTX2 roundtrip dimensions changed".to_string(),
         });
     }
-    let max_error = source.pixels().iter().zip(roundtrip.pixels()).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0);
+    let max_error = source
+        .pixels()
+        .iter()
+        .zip(roundtrip.pixels())
+        .map(|(a, b)| a.abs_diff(*b))
+        .max()
+        .unwrap_or(0);
     if max_error > maximum {
         return Err(PpError::VerificationFailed {
             operation: OPERATION.to_string(),
@@ -251,7 +266,10 @@ fn verify_roundtrip(
     }
     verify_raster(
         &VerificationSpec {
-            exact: vec![ExactAssertion::Dimensions { width: source.width(), height: source.height() }],
+            exact: vec![ExactAssertion::Dimensions {
+                width: source.width(),
+                height: source.height(),
+            }],
             perceptual: Vec::new(),
             regions: Vec::new(),
         },
@@ -288,24 +306,42 @@ fn verify_guard(path: &Path, expected: &FilePrecondition, label: &str) -> PpResu
 }
 
 fn resolve_path(base: &Path, value: &str, label: &str) -> PpResult<PathBuf> {
-    if value.is_empty() || value != value.trim() || value.contains('\0') || value.contains('\\') || value.len() > 4096 {
-        return Err(PpError::InvalidRequest(format!("{label} must be a bounded printable path")));
+    if value.is_empty()
+        || value != value.trim()
+        || value.contains('\0')
+        || value.contains('\\')
+        || value.len() > 4096
+    {
+        return Err(PpError::InvalidRequest(format!(
+            "{label} must be a bounded printable path"
+        )));
     }
     let path = Path::new(value);
-    if path.components().any(|component| matches!(component, Component::ParentDir)) {
-        return Err(PpError::InvalidRequest(format!("{label} must not contain '..'")));
+    if path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(PpError::InvalidRequest(format!(
+            "{label} must not contain '..'"
+        )));
     }
-    Ok(if path.is_absolute() { path.to_path_buf() } else { base.join(path) })
+    Ok(if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        base.join(path)
+    })
 }
 
 fn absolute(path: &Path) -> PpResult<PathBuf> {
     if path.is_absolute() {
         return Ok(path.to_path_buf());
     }
-    std::env::current_dir().map(|root| root.join(path)).map_err(|error| PpError::FileIo {
-        path: path.to_path_buf(),
-        message: error.to_string(),
-    })
+    std::env::current_dir()
+        .map(|root| root.join(path))
+        .map_err(|error| PpError::FileIo {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        })
 }
 
 struct TempSet {
@@ -316,8 +352,13 @@ struct TempSet {
 
 impl TempSet {
     fn new(output: &Path, generation: u64, digest: &Sha256Digest) -> PpResult<Self> {
-        let parent = output.parent().ok_or_else(|| PpError::InvalidRequest("texture output has no parent".to_string()))?;
-        let name = output.file_name().and_then(|v| v.to_str()).unwrap_or("texture.ktx2");
+        let parent = output.parent().ok_or_else(|| {
+            PpError::InvalidRequest("texture output has no parent".to_string())
+        })?;
+        let name = output
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("texture.ktx2");
         let prefix = &digest.as_str()[..12];
         Ok(Self {
             source_png: parent.join(format!(".{name}.pp-{generation}-{prefix}.source.png")),
@@ -332,18 +373,25 @@ impl TempSet {
             match crate::io::capability::remove_file(path) {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => cleanup_error = Some(format!("failed to remove '{}': {error}", path.display())),
+                Err(error) => {
+                    cleanup_error = Some(format!("failed to remove '{}': {error}", path.display()))
+                }
             }
         }
         match (result, cleanup_error) {
             (Ok(value), None) => Ok(value),
             (Ok(_), Some(cause)) => Err(PpError::DependencyFailed {
-                operation: OPERATION.to_string(), dependency: "filesystem".to_string(), cause, retryable: false,
+                operation: OPERATION.to_string(),
+                dependency: "filesystem".to_string(),
+                cause,
+                retryable: false,
             }),
             (Err(error), None) => Err(error),
             (Err(error), Some(cleanup)) => Err(PpError::DependencyFailed {
-                operation: OPERATION.to_string(), dependency: "filesystem".to_string(),
-                cause: format!("{error}; cleanup also failed: {cleanup}"), retryable: false,
+                operation: OPERATION.to_string(),
+                dependency: "filesystem".to_string(),
+                cause: format!("{error}; cleanup also failed: {cleanup}"),
+                retryable: false,
             }),
         }
     }
@@ -367,17 +415,29 @@ struct TextureCompileRequest {
 impl TextureCompileRequest {
     fn validate(&self) -> PpResult<()> {
         if self.schema_version != 1 || self.operation != OPERATION {
-            return Err(PpError::InvalidRequest(format!("texture request schemaVersion must be 1 and operation must be '{OPERATION}'")));
+            return Err(PpError::InvalidRequest(format!(
+                "texture request schemaVersion must be 1 and operation must be '{OPERATION}'"
+            )));
         }
         if self.semantic == TextureSemantic::NormalMap && self.encoding != TextureEncoding::Uastc {
-            return Err(PpError::InvalidRequest("normal_map textures require UASTC encoding".to_string()));
+            return Err(PpError::InvalidRequest(
+                "normal_map textures require UASTC encoding".to_string(),
+            ));
         }
         if self.semantic.is_srgb() {
-            if self.verification.ssimulacra2_minimum_milli.is_none() || self.verification.maximum_absolute_channel_error.is_some() {
-                return Err(PpError::InvalidRequest("color_srgb verification must provide only ssimulacra2MinimumMilli".to_string()));
+            if self.verification.delta_e2000.is_none()
+                || self.verification.maximum_absolute_channel_error.is_some()
+            {
+                return Err(PpError::InvalidRequest(
+                    "color_srgb verification must provide only deltaE2000 thresholds".to_string(),
+                ));
             }
-        } else if self.verification.maximum_absolute_channel_error.is_none() || self.verification.ssimulacra2_minimum_milli.is_some() {
-            return Err(PpError::InvalidRequest("non-sRGB verification must provide only maximumAbsoluteChannelError".to_string()));
+        } else if self.verification.maximum_absolute_channel_error.is_none()
+            || self.verification.delta_e2000.is_some()
+        {
+            return Err(PpError::InvalidRequest(
+                "non-sRGB verification must provide only maximumAbsoluteChannelError".to_string(),
+            ));
         }
         Ok(())
     }
@@ -393,20 +453,32 @@ struct TextureInputBinding {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum TextureEncoding { BasisLz, Uastc }
+enum TextureEncoding {
+    BasisLz,
+    Uastc,
+}
+
 impl TextureEncoding {
-    fn into_effect(self) -> KtxEncoding { match self { Self::BasisLz => KtxEncoding::BasisLz, Self::Uastc => KtxEncoding::Uastc } }
+    fn into_effect(self) -> KtxEncoding {
+        match self {
+            Self::BasisLz => KtxEncoding::BasisLz,
+            Self::Uastc => KtxEncoding::Uastc,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct PinnedTool { path: PathBuf, sha256: Sha256Digest }
+struct PinnedTool {
+    path: PathBuf,
+    sha256: Sha256Digest,
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TextureVerification {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    ssimulacra2_minimum_milli: Option<i32>,
+    delta_e2000: Option<DeltaEThresholds>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     maximum_absolute_channel_error: Option<u8>,
 }
