@@ -1,6 +1,9 @@
+mod alpha;
 mod artifact;
 mod chroma;
+mod composite;
 mod error;
+mod geometry;
 mod inspect;
 mod pixel;
 mod psd;
@@ -10,9 +13,12 @@ mod svg;
 mod transform;
 mod verify;
 
+pub use alpha::*;
 pub use artifact::*;
 pub use chroma::*;
+pub use composite::*;
 pub use error::*;
+pub use geometry::*;
 pub use inspect::*;
 pub use pixel::*;
 pub use psd::{
