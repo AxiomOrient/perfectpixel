@@ -29,11 +29,14 @@ USAGE
   perfectpixel upscale <input> --out <output> --scale <n>=2 [--filter nearest|lanczos3] [--jpeg-quality <1..100>] [--background <#RRGGBB>]
   perfectpixel edit --request <edit-request.json>
   perfectpixel psd --request <psd-export-request.json>
+  perfectpixel document-psd --request <document-psd-request.json>
   perfectpixel chroma-plan --request <chroma-plan-request.json>
   perfectpixel normalize --request <normalize-request.json> --out-dir <dir>
   perfectpixel bundle --request <sprite-request.json> --out-dir <dir>
+  perfectpixel texture-compile --request <texture-request.json>
   perfectpixel vector <input> --out <output.svg> [--preset <preset>] [--profile <profile>] [--detail auto|1..5] [--min-quality <0..1>] [--max-quality-loss <0..1>] [--max-paths <n>] [--policy <json>] [--report <json>] [--diagnostics <dir>]
   perfectpixel vector-analyze <input> [--preset <preset>] [--profile <profile>] [--policy <json>] [--report <json>]
+  perfectpixel vision-foreground-instances --request <vision-request.json>
   perfectpixel motion-scaffold <input.svg> --out-dir <dir>
   perfectpixel motion-build --request <motion-request.json> --out-dir <dir>
 "#;
@@ -94,6 +97,7 @@ fn dispatch(operation: Operation) -> PpResult<String> {
         } => handlers::upscale(input, output, scale, filter, jpeg_quality, background),
         Operation::Edit { request } => handlers::edit(request),
         Operation::ExportPsd { request } => handlers::export_psd(request),
+        Operation::CompileDocumentPsd { request } => handlers::compile_document_psd(request),
         Operation::ChromaPlan { request } => handlers::chroma_plan(request),
         Operation::NormalizeSprite {
             request,
@@ -103,6 +107,7 @@ fn dispatch(operation: Operation) -> PpResult<String> {
             request,
             output_dir,
         } => handlers::bundle(request, output_dir),
+        Operation::CompileTexture { request } => handlers::texture_compile(request),
         Operation::CompileVector {
             input,
             output,
@@ -135,6 +140,9 @@ fn dispatch(operation: Operation) -> PpResult<String> {
             policy,
             report,
         } => handlers::vector_analyze(input, preset, profile, policy, report),
+        Operation::AppleVisionForegroundInstances { request } => {
+            handlers::vision_foreground_instances(request)
+        }
         Operation::ScaffoldMotion { input, output_dir } => {
             handlers::motion_scaffold(input, output_dir)
         }
