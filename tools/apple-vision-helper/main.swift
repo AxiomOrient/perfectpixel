@@ -1,5 +1,6 @@
 import CoreGraphics
 import CoreImage
+import Darwin
 import Foundation
 import Vision
 
@@ -128,7 +129,7 @@ private enum PerfectPixelVisionHelper {
         } catch {
             let message = "perfectpixel-vision-helper: \(error)\n"
             FileHandle.standardError.write(Data(message.utf8))
-            Foundation.exit(2)
+            Darwin.exit(2)
         }
     }
 }
