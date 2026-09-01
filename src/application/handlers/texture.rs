@@ -1,29 +1,35 @@
-use std::{path::{Component, Path, PathBuf}, time::Duration};
+use std::{
+    path::{Component, Path, PathBuf},
+    time::Duration,
+};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    inspect_ktx2, transform_icc_rgba8_to_srgb, verify_ktx2_contract, verify_raster,
-    AlphaMode, ArtifactRef, AtomicFileWriter, ColorSpec, DeltaEThresholds, EffectCompletion,
-    EffectIdentity, ExactAssertion, FilePrecondition, ImageCodec, Ktx2EffectRequest,
-    Ktx2ExtractRequest, KtxEncoding, PerceptualAssertion, PixelFormat, PixelSpec, PngEncoder,
-    PpError, PpResult, Sha256Digest, TextureSemantic, VerificationSpec,
+    inspect_ktx2, verify_ktx2_contract, verify_raster, AlphaMode, ArtifactRef, AtomicFileWriter,
+    ColorSpec, DeltaEThresholds, EffectCompletion, EffectIdentity, ExactAssertion,
+    FilePrecondition, ImageCodec, Ktx2EffectRequest, Ktx2ExtractRequest, KtxEncoding,
+    PerceptualAssertion, PixelFormat, PixelSpec, PngEncoder, PpError, PpResult, Sha256Digest,
+    TextureSemantic, VerificationSpec,
 };
 use crate::runtime::{CancellationFlag, PinnedExecutable};
 
 use super::super::{
     path::{reject_same_path, validate_file_extension, validate_raster_input_path},
-    shared::{effect_failure_to_error, read_bytes_limited, read_json_request_snapshot, serialize_json, MAX_RASTER_READ_BYTES},
+    shared::{
+        effect_failure_to_error, read_bytes_limited, read_json_request_snapshot, serialize_json,
+        MAX_RASTER_READ_BYTES,
+    },
 };
 
 const OPERATION: &str = "texture.compile";
 const SCHEMA: &str = "perfectpixel.texture-compile/1";
-const EFFECT_TIMEOUT: Duration = Duration::from_secs(120);
 
-pub(super) fn compile(request_path: PathBuf) -> PpResult<String> {
+pub(super) fn compile(request_path: PathBuf, effect_timeout: Duration) -> PpResult<String> {
     validate_file_extension(&request_path, &["json"], "texture compile request")?;
     let request_guard = FilePrecondition::capture(&request_path)?;
-    let (request, _snapshot): (TextureCompileRequest, _) = read_json_request_snapshot(&request_path)?;
+    let (request, _snapshot): (TextureCompileRequest, _) =
+        read_json_request_snapshot(&request_path)?;
     request.validate()?;
 
     let base = request_path.parent().unwrap_or_else(|| Path::new("."));
@@ -31,21 +37,30 @@ pub(super) fn compile(request_path: PathBuf) -> PpResult<String> {
     let output = resolve_path(base, &request.output, "texture output")?;
     validate_raster_input_path(&input)?;
     validate_file_extension(&output, &["ktx2"], "texture output")?;
-    reject_same_path(&request_path, &output, "texture output must not overwrite its request")?;
+    reject_same_path(
+        &request_path,
+        &output,
+        "texture output must not overwrite its request",
+    )?;
     reject_same_path(&input, &output, "texture input and output must not collide")?;
 
     let input_guard = FilePrecondition::capture(&input)?;
     let output_guard = FilePrecondition::capture(&output)?;
     let input_bytes = read_bytes_limited(&input, MAX_RASTER_READ_BYTES)?;
-    let observed_artifact = ArtifactRef::from_bytes(request.input.artifact.media_type(), &input_bytes)?;
+    let observed_artifact =
+        ArtifactRef::from_bytes(request.input.artifact.media_type(), &input_bytes)?;
     if observed_artifact != request.input.artifact {
         return Err(PpError::PreconditionFailed {
             operation: OPERATION.to_string(),
-            cause: format!("input bytes no longer match declared ArtifactRef for '{}'", input.display()),
+            cause: format!(
+                "input bytes no longer match declared ArtifactRef for '{}'",
+                input.display()
+            ),
         });
     }
 
-    let decoded = ImageCodec::decode_rgba_bytes_with_metadata(&input, &input_bytes, Default::default())?;
+    let decoded =
+        ImageCodec::decode_rgba_bytes_with_metadata(&input, &input_bytes, Default::default())?;
     let decoded_pixel = decoded.pixel_spec().clone();
     let icc = decoded.icc_profile().map(<[u8]>::to_vec);
     let source = decoded.into_raster();
@@ -88,7 +103,7 @@ pub(super) fn compile(request_path: PathBuf) -> PpResult<String> {
                 encoding: request.encoding.into_effect(),
                 generate_mipmaps: request.generate_mipmaps,
                 srgb: request.semantic.is_srgb(),
-                timeout: EFFECT_TIMEOUT,
+                timeout: effect_timeout,
             },
             &cancellation,
         );
@@ -109,7 +124,7 @@ pub(super) fn compile(request_path: PathBuf) -> PpResult<String> {
                 executable: executable.clone(),
                 input: absolute(&temp.ktx_candidate)?,
                 staging_output: absolute(&temp.roundtrip_png)?,
-                timeout: EFFECT_TIMEOUT,
+                timeout: effect_timeout,
             },
             &cancellation,
         );
@@ -123,7 +138,8 @@ pub(super) fn compile(request_path: PathBuf) -> PpResult<String> {
         if !verification.ok {
             return Err(PpError::VerificationFailed {
                 operation: OPERATION.to_string(),
-                cause: "KTX2 decode roundtrip failed the requested verification profile".to_string(),
+                cause: "KTX2 decode roundtrip failed the requested verification contract"
+                    .to_string(),
             });
         }
 
@@ -180,18 +196,22 @@ fn normalize_source(
         (ColorSpec::Icc { digest }, Some(profile)) => {
             if !semantic.is_srgb() {
                 return Err(PpError::InvalidRequest(
-                    "ICC-tagged input is accepted only for color_srgb texture semantics".to_string(),
+                    "ICC-tagged input is accepted only for color_srgb texture semantics"
+                        .to_string(),
                 ));
             }
             if declared.color != decoded.color || digest != &Sha256Digest::from_bytes(profile) {
                 return Err(PpError::PreconditionFailed {
                     operation: OPERATION.to_string(),
-                    cause: "texture input ICC provenance does not match declared PixelSpec".to_string(),
+                    cause: "texture input ICC provenance does not match declared PixelSpec"
+                        .to_string(),
                 });
             }
-            let (converted, pixel, _receipt) =
-                transform_icc_rgba8_to_srgb(&raster, &decoded, profile)?;
-            Ok((converted, pixel))
+            Err(PpError::Unsupported {
+                operation: OPERATION.to_string(),
+                cause: "embedded ICC conversion is not implemented; provide an explicitly declared unprofiled sRGB source"
+                    .to_string(),
+            })
         }
         (ColorSpec::Unknown, None) => {
             let required = if semantic.is_srgb() {
@@ -240,11 +260,15 @@ fn verify_roundtrip(
         );
     }
 
-    let maximum = request.verification.maximum_absolute_channel_error.ok_or_else(|| {
-        PpError::InvalidRequest(
-            "linear/normal_map/mask texture verification requires maximumAbsoluteChannelError".to_string(),
-        )
-    })?;
+    let maximum = request
+        .verification
+        .maximum_absolute_channel_error
+        .ok_or_else(|| {
+            PpError::InvalidRequest(
+                "linear/normal_map/mask texture verification requires maximumAbsoluteChannelError"
+                    .to_string(),
+            )
+        })?;
     if source.width() != roundtrip.width() || source.height() != roundtrip.height() {
         return Err(PpError::VerificationFailed {
             operation: OPERATION.to_string(),
