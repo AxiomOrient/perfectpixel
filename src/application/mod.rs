@@ -4,14 +4,12 @@ mod generation;
 mod generation_adapter;
 mod handlers;
 mod path;
-mod request;
 mod shared;
 
-pub use request::ApplicationRequest;
 pub use shared::ApplicationOutput;
 pub use crate::{PpError, PpResult};
 
-use crate::Operation;
+use crate::{Operation, OperationSpec};
 use cli::CliInput;
 use shared::{operation_phase, render_result};
 
@@ -19,7 +17,7 @@ const HELP: &str = r#"perfectpixel 0.3.1
 
 PRODUCT
   deterministic asset compiler for authored or generated local assets.
-  It transforms and verifies assets; model inference is never a core success authority.
+  It transforms and verifies assets; external inference is only a candidate-producing Effect.
   Successful managed outputs are evaluated before atomic publication.
 
 USAGE
@@ -41,16 +39,7 @@ USAGE
   perfectpixel motion-build --request <motion-request.json> --out-dir <dir>
 "#;
 
-/// MCP/programmatic compatibility entry. The transport DTO is converted once into the same
-/// canonical Operation used by the CLI; no argv reconstruction or CLI reparsing is involved.
-pub fn execute(request: ApplicationRequest) -> ApplicationOutput {
-    match Operation::try_from(request) {
-        Ok(operation) => execute_operation(operation),
-        Err(error) => render_result(Err(error), "application.request", "application"),
-    }
-}
-
-/// Human CLI adapter. Parsing owns syntax only; all semantics and execution converge on Operation.
+/// Human CLI adapter. Parsing owns syntax only; semantic execution starts from `Operation`.
 pub fn execute_cli(args: Vec<String>) -> ApplicationOutput {
     match cli::parse(&args) {
         Ok(CliInput::Help) => ApplicationOutput::from_text(HELP.to_string(), 0),
@@ -63,10 +52,10 @@ pub fn execute_cli(args: Vec<String>) -> ApplicationOutput {
 pub(crate) fn execute_operation(operation: Operation) -> ApplicationOutput {
     let spec = operation.spec();
     let phase = operation_phase(spec.name);
-    render_result(dispatch(operation), spec.name, phase)
+    render_result(dispatch(operation, spec), spec.name, phase)
 }
 
-fn dispatch(operation: Operation) -> PpResult<String> {
+fn dispatch(operation: Operation, spec: OperationSpec) -> PpResult<String> {
     match operation {
         Operation::Schema => handlers::schema(),
         Operation::Inspect { input } => handlers::inspect(input),
@@ -107,7 +96,9 @@ fn dispatch(operation: Operation) -> PpResult<String> {
             request,
             output_dir,
         } => handlers::bundle(request, output_dir),
-        Operation::CompileTexture { request } => handlers::texture_compile(request),
+        Operation::CompileTexture { request } => {
+            handlers::texture_compile(request, external_timeout(spec))
+        }
         Operation::CompileVector {
             input,
             output,
@@ -141,7 +132,7 @@ fn dispatch(operation: Operation) -> PpResult<String> {
             report,
         } => handlers::vector_analyze(input, preset, profile, policy, report),
         Operation::AppleVisionForegroundInstances { request } => {
-            handlers::vision_foreground_instances(request)
+            handlers::vision_foreground_instances(request, external_timeout(spec))
         }
         Operation::ScaffoldMotion { input, output_dir } => {
             handlers::motion_scaffold(input, output_dir)
@@ -151,6 +142,11 @@ fn dispatch(operation: Operation) -> PpResult<String> {
             output_dir,
         } => handlers::motion_build(request, output_dir),
     }
+}
+
+fn external_timeout(spec: OperationSpec) -> std::time::Duration {
+    spec.timeout
+        .expect("external process operation must declare a timeout in OperationRegistry")
 }
 
 #[cfg(test)]
@@ -182,8 +178,8 @@ mod tests {
     }
 
     #[test]
-    fn application_request_does_not_roundtrip_through_cli() {
-        let output = execute(ApplicationRequest::Schema);
+    fn operation_executes_without_transport_roundtrip() {
+        let output = execute_operation(Operation::Schema);
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("deterministic-asset-compiler"));
     }
