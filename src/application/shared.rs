@@ -1,8 +1,4 @@
-use std::{
-    fs,
-    io::Read,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -209,29 +205,10 @@ pub(super) fn serialize_json<T: Serialize>(value: &T, path: &str) -> PpResult<St
 }
 
 pub(super) fn read_bytes_limited(path: &Path, limit: usize) -> PpResult<Vec<u8>> {
-    let mut file = fs::File::open(path).map_err(|source| PpError::FileIo {
+    crate::io::capability::read_bounded(path, limit).map_err(|source| PpError::FileIo {
         path: path.to_path_buf(),
         message: source.to_string(),
-    })?;
-    let read_limit = u64::try_from(limit)
-        .ok()
-        .and_then(|value| value.checked_add(1))
-        .ok_or_else(|| PpError::InvalidRequest("file read limit overflow".to_string()))?;
-    let mut bytes = Vec::new();
-    file.by_ref()
-        .take(read_limit)
-        .read_to_end(&mut bytes)
-        .map_err(|source| PpError::FileIo {
-            path: path.to_path_buf(),
-            message: source.to_string(),
-        })?;
-    if bytes.len() > limit {
-        return Err(PpError::FileIo {
-            path: path.to_path_buf(),
-            message: format!("file exceeds {limit}-byte read limit"),
-        });
-    }
-    Ok(bytes)
+    })
 }
 
 pub(super) fn read_utf8_limited(path: &Path, limit: usize) -> PpResult<String> {
