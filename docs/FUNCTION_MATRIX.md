@@ -1,23 +1,23 @@
 # PerfectPixel Function Matrix
 
-This matrix traces each public trigger to its authoritative semantic owner, Effect boundary, verification, and publication rule. A capability is working only when its trigger reaches the listed owner; disconnected code is not a feature.
+A capability is working only when its public trigger reaches the listed semantic owner. Disconnected code, a backend name, or a successful external process is not a product feature.
 
 | Public trigger | Canonical semantic owner | Effect / I/O boundary | Acceptance / publication |
 | --- | --- | --- | --- |
-| `schema` | `OperationRegistry` + CLI presentation metadata | stdout only | no mutation |
-| `inspect` | raster inspection core | bounded immutable file snapshot | machine-readable facts only |
+| `schema` | `OperationRegistry` + presentation schema | stdout only | no mutation |
+| `inspect` | codec-observed `PixelSpec` + pure raster inspection | bounded immutable encoded-byte snapshot | returns content `ArtifactRef`, explicit pixel/ICC provenance, geometry/alpha facts; no mutation |
 | `convert` | raster transform core | decode/encode + checked single-file writer | publish encoded bytes after successful transform |
 | `upscale` | raster transform core | decode/encode + checked single-file writer | publish encoded bytes after successful transform |
 | `edit` | deterministic `RasterEdit` transition | bounded source snapshot + PNG writer | invalid geometry/key/work fails before publication |
-| `psd` | compatibility flattened PSD v1 contract | PSD serializer + checked file writer | legacy public compatibility surface; no layered authority |
-| `document-psd` | `DocumentIR` (`document.compile_psd`) | raster artifact resolution + isolated PSD serializer | PerfectPixel merged composite/structure first, checked PSD publication last |
+| `psd` | flattened PSD v1 contract | PSD serializer + checked file writer | independent single-raster export; no layered authority |
+| `document-psd` | `DocumentIR` (`document.compile_psd`) | raster binding resolution + isolated PSD serializer | PerfectPixel merged composite/structure first, checked PSD publication last |
 | `chroma-plan` | deterministic color-planning core | request read/stdout | no mutation; not semantic segmentation |
 | `normalize` | normalize plan / generation authority | recoverable artifact-set publisher | complete managed generation replaces previous normalize generation |
 | `bundle` | sprite semantics / atlas plan | deterministic packing + artifact-set publisher | complete verified sprite generation only |
-| `texture-compile` | texture operation + KTX2 contract | pinned `ktx` process Effect | Effect candidate → KTX2 validation → decode roundtrip → checked file publication |
-| `vector` | PerfectPixel vector policy/verified route | native candidate + resvg verification + checked writers | backend name never decides success; rejection cannot publish final SVG |
-| `vector-analyze` | PerfectPixel vector policy/route analysis | bounded source snapshot/stdout or report | candidate-free; cannot publish SVG |
-| `vision-foreground-instances` | mask/alpha/geometry verification core | pinned Apple Vision helper Effect | current Effect identity only → deterministic mask cleanup/verification → checked directory publication |
+| `texture-compile` | texture operation + KTX2 verifier | SHA-pinned KTX process Effects | current candidate → structure + decode roundtrip verification → checked file publication |
+| `vector` | PerfectPixel vector policy / verified route | native candidate + resvg verification + checked writers | backend name never decides success; rejection cannot publish final SVG |
+| `vector-analyze` | PerfectPixel vector policy / route analysis | bounded source snapshot/stdout or report | candidate-free; cannot publish SVG |
+| `vision-foreground-instances` | mask/alpha/geometry verification core | SHA-pinned Apple Vision helper Effect | current identity → deterministic mask cleanup/verification → checked directory publication |
 | `motion-scaffold` | deterministic motion scaffold compiler | recoverable artifact-set publisher | new scaffold invalidates prior build artifacts bound to old scene |
 | `motion-build` | deterministic motion compiler | recoverable artifact-set publisher | verified request/source identity before commit |
 
@@ -25,10 +25,11 @@ This matrix traces each public trigger to its authoritative semantic owner, Effe
 
 | Responsibility | Owner |
 | --- | --- |
-| operation name / semantic policy | `OperationRegistry` / typed `Operation` |
+| operation name / risk / capabilities / timeout | `OperationRegistry` / typed `Operation` |
 | CLI syntax / MCP presentation | transport adapters only |
 | artifact identity | `ArtifactRef` SHA-256 digest |
-| pixel / color / alpha semantics | core pixel/color/alpha |
+| encoded color provenance | codec boundary → `PixelSpec` |
+| pixel / alpha semantics | core pixel/alpha |
 | geometry / compositing | core geometry/composite |
 | verification policy / evidence | core verify |
 | document semantics | `DocumentIR` |
@@ -41,17 +42,18 @@ This matrix traces each public trigger to its authoritative semantic owner, Effe
 
 ## Failure invariants
 
-- No transport reconstructs argv and reparses it to reach product semantics.
-- Unknown color/profile is never silently promoted to sRGB. Embedded ICC is preserved as provenance and is explicitly unsupported by the dependency-minimal transform boundary.
+- CLI and MCP create the same canonical `Operation`; neither transport reconstructs argv to reach product semantics.
+- A bare `Raster` does not claim color provenance. `inspect` reports codec-observed `PixelSpec` instead of inventing sRGB.
+- Missing profile remains `ColorSpec::Unknown`; embedded ICC is preserved by digest/bytes. Operations that require ICC conversion return explicit `Unsupported` because this release has no ICC transform engine.
 - Perceptual raster verification is CIEDE2000 plus explicit alpha support; exact/region/geometry gates remain independent.
 - External process success is only a candidate event. `EffectIdentity` prevents stale results from becoming current state.
 - Cancelled, timed-out, failed, stale, or unverified external Effects cannot publish artifacts.
-- Mutation captures a destination/input precondition before expensive work and commits only through the atomic publication authority.
-- VTracer is not exposed until it is selected by the same verified vector route/acceptance pipeline; disconnected optional backend code is not retained.
+- Mutation captures destination/input preconditions before expensive work and commits only through the atomic publication authority.
+- VTracer remains absent until the same verified vector route can select and identity-pin it; disconnected optional backend code is not retained.
 
 ## Verification trace
 
-The local host is expected to run:
+Run on the target MacBook:
 
 ```bash
 cargo fmt --all -- --check
@@ -59,4 +61,4 @@ cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 cargo test --locked --workspace --all-targets --all-features
 ```
 
-Environment-specific Apple Vision/KTX/Photoshop behavior remains UNKNOWN until exercised on the corresponding local host/toolchain.
+Apple Vision, KTX executable behavior, and native PSD interoperability remain `UNKNOWN` until exercised on the corresponding local runtime.
