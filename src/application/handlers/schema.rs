@@ -1,7 +1,7 @@
 use serde::Serialize;
 
 use crate::{
-    Operation, OperationRisk, PpResult, SideEffectClass, CHROMA_CANDIDATE_PALETTE,
+    OperationRisk, OperationSpec, PpResult, SideEffectClass, CHROMA_CANDIDATE_PALETTE,
     CHROMA_PLAN_METRIC, CHROMA_PLAN_SCHEMA, MOTION_SCHEMA, PSD_DEFAULT_ALPHA_THRESHOLD,
     PSD_DEFAULT_MAX_KNOTS, PSD_EXPORT_SCHEMA, PSD_MAX_DIMENSION, PSD_MAX_KNOTS,
 };
@@ -9,6 +9,11 @@ use crate::{
 use super::super::shared::serialize_json;
 
 pub(super) fn schema() -> PpResult<String> {
+    let operations = crate::operation_specs()
+        .iter()
+        .copied()
+        .map(OperationSchema::from)
+        .collect();
     serialize_json(
         &SchemaPayload {
             cli_version: env!("CARGO_PKG_VERSION"),
@@ -32,7 +37,7 @@ pub(super) fn schema() -> PpResult<String> {
                 "motion-scaffold",
                 "motion-build",
             ],
-            operations: operation_specs(),
+            operations,
             normalize_schema: crate::NORMALIZE_SCHEMA,
             normalize_outputs: &[
                 "normalize-report.json",
@@ -193,98 +198,17 @@ pub(super) fn schema() -> PpResult<String> {
     )
 }
 
-fn operation_specs() -> Vec<OperationSchema> {
-    let specs = [
-        Operation::Schema.spec(),
-        Operation::Inspect {
-            input: Default::default(),
-        }
-        .spec(),
-        Operation::Convert {
-            input: Default::default(),
-            output: Default::default(),
-            width: None,
-            height: None,
-            filter: None,
-            jpeg_quality: None,
-            background: None,
-        }
-        .spec(),
-        Operation::Upscale {
-            input: Default::default(),
-            output: Default::default(),
-            scale: crate::ScaleFactor::new(2).expect("static valid scale"),
-            filter: None,
-            jpeg_quality: None,
-            background: None,
-        }
-        .spec(),
-        Operation::Edit {
-            request: Default::default(),
-        }
-        .spec(),
-        Operation::ExportPsd {
-            request: Default::default(),
-        }
-        .spec(),
-        Operation::ChromaPlan {
-            request: Default::default(),
-        }
-        .spec(),
-        Operation::NormalizeSprite {
-            request: Default::default(),
-            output_dir: Default::default(),
-        }
-        .spec(),
-        Operation::CompileSprite {
-            request: Default::default(),
-            output_dir: Default::default(),
-        }
-        .spec(),
-        Operation::CompileVector {
-            input: Default::default(),
-            output: Default::default(),
-            preset: crate::VectorPresetSelection::Auto,
-            profile: crate::SvgProfile::Compact,
-            detail: None,
-            minimum_quality: None,
-            maximum_quality_loss: None,
-            maximum_paths: None,
-            policy: None,
-            report: None,
-            diagnostics: None,
-        }
-        .spec(),
-        Operation::AnalyzeVector {
-            input: Default::default(),
-            preset: crate::VectorPresetSelection::Auto,
-            profile: crate::SvgProfile::Compact,
-            policy: None,
-            report: None,
-        }
-        .spec(),
-        Operation::ScaffoldMotion {
-            input: Default::default(),
-            output_dir: Default::default(),
-        }
-        .spec(),
-        Operation::CompileMotion {
-            request: Default::default(),
-            output_dir: Default::default(),
-        }
-        .spec(),
-    ];
-    specs
-        .into_iter()
-        .map(|spec| OperationSchema {
+impl From<OperationSpec> for OperationSchema {
+    fn from(spec: OperationSpec) -> Self {
+        Self {
             name: spec.name,
             summary: spec.summary,
             side_effect: spec.side_effect,
             risk: spec.risk,
             timeout_ms: spec.timeout.map(|value| value.as_millis()),
             capabilities: spec.capabilities,
-        })
-        .collect()
+        }
+    }
 }
 
 #[derive(Serialize)]
