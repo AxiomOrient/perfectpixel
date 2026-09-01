@@ -1,14 +1,12 @@
 use std::{
     fs,
     io::Read,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 
 use serde::{de::DeserializeOwned, Serialize};
 
-use crate::{
-    AtomicArtifactSetWriter, ImageCodec, PpError, PpResult, Raster,
-};
+use crate::{AtomicArtifactSetWriter, ImageCodec, PpError, PpResult, Raster};
 
 use super::{
     generation::GenerationWorkflow,
@@ -16,6 +14,7 @@ use super::{
         plan_generation_publication, verify_generation_publication, GeneratedArtifact,
         GenerationPublicationRequest, InputSnapshot,
     },
+    path::{managed_relative_path, reject_same_path},
 };
 
 pub(super) const MAX_CONTROL_READ_BYTES: usize = 8 * 1024 * 1024;
@@ -62,11 +61,13 @@ pub(super) fn render_result(result: PpResult<String>, phase: &'static str) -> Ap
 
 pub(super) fn operation_phase(name: &str) -> &'static str {
     match name {
-        "image.convert" | "image.upscale" => "asset",
+        "image.inspect" | "image.convert" | "image.upscale" | "image.edit" | "image.chroma_plan" => "asset",
         "document.export_psd" => "psd",
+        "sprite.normalize" | "sprite.compile" => "sprite",
         "vector.compile" => "vector",
         "vector.analyze" => "vectorAnalyze",
-        _ => "cli",
+        "motion.scaffold" | "motion.compile" => "motion",
+        _ => "application",
     }
 }
 
@@ -106,7 +107,7 @@ pub(super) fn error_path(error: &PpError) -> Option<String> {
     }
 }
 
-pub(super) fn exit_code(error: &PpError) -> i32 {
+fn exit_code(error: &PpError) -> i32 {
     match error {
         PpError::InvalidOption(_)
         | PpError::InvalidOptionSource { .. }
@@ -267,7 +268,7 @@ pub(super) fn reject_generated_output_collisions(
     for relative in outputs {
         let output = out_dir.join(managed_relative_path(relative)?);
         for input in inputs {
-            super::cli_input::reject_same_path(
+            reject_same_path(
                 input.source_path(),
                 &output,
                 "generated output must not overwrite its request or input",
@@ -275,25 +276,4 @@ pub(super) fn reject_generated_output_collisions(
         }
     }
     Ok(())
-}
-
-pub(super) fn managed_relative_path(value: &str) -> PpResult<PathBuf> {
-    if value.is_empty() || value.contains('\0') || value.contains('\\') {
-        return Err(PpError::InvalidRequest(format!(
-            "managed bundle output '{}' is not a safe relative path",
-            value
-        )));
-    }
-    let path = PathBuf::from(value);
-    if path.is_absolute()
-        || path
-            .components()
-            .any(|component| !matches!(component, Component::Normal(_)))
-    {
-        return Err(PpError::InvalidRequest(format!(
-            "managed bundle output '{}' is not a safe relative path",
-            value
-        )));
-    }
-    Ok(path)
 }
