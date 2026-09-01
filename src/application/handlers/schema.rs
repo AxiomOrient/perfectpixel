@@ -29,11 +29,14 @@ pub(super) fn schema() -> PpResult<String> {
                 "upscale",
                 "edit",
                 "psd",
+                "document-psd",
                 "chroma-plan",
                 "vector",
                 "vector-analyze",
                 "normalize",
                 "bundle",
+                "texture-compile",
+                "vision-foreground-instances",
                 "motion-scaffold",
                 "motion-build",
             ],
@@ -72,6 +75,26 @@ pub(super) fn schema() -> PpResult<String> {
                 "bounded-illustration",
             ],
             vector_profiles: &["compact", "motion-structure-ready"],
+            request_compilers: &[
+                RequestCompilerSchema {
+                    command: "document-psd",
+                    operation: "document.compile_psd",
+                    request_schema: "perfectpixel.document-psd-compile/2",
+                    publication: "single checked atomic PSD",
+                },
+                RequestCompilerSchema {
+                    command: "texture-compile",
+                    operation: "texture.compile",
+                    request_schema: "perfectpixel.texture-compile/1",
+                    publication: "single checked atomic KTX2",
+                },
+                RequestCompilerSchema {
+                    command: "vision-foreground-instances",
+                    operation: "vision.apple.foreground_instances",
+                    request_schema: "perfectpixel.vision-foreground-instances-request/1",
+                    publication: "checked atomic artifact-set directory",
+                },
+            ],
             asset_adapter: AssetAdapterSchema {
                 raster_inputs: &["png", "jpg", "jpeg", "webp"],
                 raster_outputs: &["png", "jpg", "jpeg", "webp"],
@@ -233,6 +256,7 @@ struct SchemaPayload {
     publication_policy: &'static str,
     commands: &'static [&'static str],
     operations: Vec<OperationSchema>,
+    request_compilers: &'static [RequestCompilerSchema],
     chroma_plan_schema: &'static str,
     chroma_plan_command: ChromaPlanCommandSchema,
     normalize_schema: &'static str,
@@ -253,6 +277,15 @@ struct SchemaPayload {
     vector_analyze_command: VectorAnalyzeCommandSchema,
     vector_authority: &'static str,
     packing_defaults: PackingDefaultsPayload,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RequestCompilerSchema {
+    command: &'static str,
+    operation: &'static str,
+    request_schema: &'static str,
+    publication: &'static str,
 }
 
 #[derive(Serialize)]
