@@ -4,9 +4,8 @@ use std::{
 };
 
 use crate::{
-    parse_unit_score, parse_vector_detail, parse_vector_preset, parse_vector_profile, JpegQuality,
-    Operation, PpError, PpResult, ResampleFilter, ScaleFactor, SvgProfile, UnitScore,
-    VectorPresetSelection,
+    parse_vector_detail, parse_vector_preset, parse_vector_profile, JpegQuality, Operation, PpError,
+    PpResult, ResampleFilter, ScaleFactor, SvgProfile, UnitScore, VectorPresetSelection,
 };
 
 use super::asset_codec::parse_background;
@@ -17,9 +16,7 @@ use super::asset_codec::parse_background;
 #[derive(Debug, Clone)]
 pub enum ApplicationRequest {
     Schema,
-    Inspect {
-        input: PathBuf,
-    },
+    Inspect { input: PathBuf },
     Convert {
         input: PathBuf,
         output: PathBuf,
@@ -37,14 +34,8 @@ pub enum ApplicationRequest {
         jpeg_quality: Option<u8>,
         background: Option<String>,
     },
-    Normalize {
-        request: PathBuf,
-        output_dir: PathBuf,
-    },
-    Bundle {
-        request: PathBuf,
-        output_dir: PathBuf,
-    },
+    Normalize { request: PathBuf, output_dir: PathBuf },
+    Bundle { request: PathBuf, output_dir: PathBuf },
     Vector {
         input: PathBuf,
         output: PathBuf,
@@ -65,14 +56,8 @@ pub enum ApplicationRequest {
         policy: Option<PathBuf>,
         report: Option<PathBuf>,
     },
-    MotionScaffold {
-        input: PathBuf,
-        output_dir: PathBuf,
-    },
-    MotionBuild {
-        request: PathBuf,
-        output_dir: PathBuf,
-    },
+    MotionScaffold { input: PathBuf, output_dir: PathBuf },
+    MotionBuild { request: PathBuf, output_dir: PathBuf },
 }
 
 impl TryFrom<ApplicationRequest> for Operation {
@@ -82,15 +67,7 @@ impl TryFrom<ApplicationRequest> for Operation {
         Ok(match request {
             ApplicationRequest::Schema => Self::Schema,
             ApplicationRequest::Inspect { input } => Self::Inspect { input },
-            ApplicationRequest::Convert {
-                input,
-                output,
-                width,
-                height,
-                filter,
-                jpeg_quality,
-                background,
-            } => Self::Convert {
+            ApplicationRequest::Convert { input, output, width, height, filter, jpeg_quality, background } => Self::Convert {
                 input,
                 output,
                 width: optional_nonzero(width, "width")?,
@@ -99,48 +76,19 @@ impl TryFrom<ApplicationRequest> for Operation {
                 jpeg_quality: optional_jpeg_quality(jpeg_quality)?,
                 background: background.as_deref().map(parse_background).transpose()?,
             },
-            ApplicationRequest::Upscale {
+            ApplicationRequest::Upscale { input, output, scale, filter, jpeg_quality, background } => Self::Upscale {
                 input,
                 output,
-                scale,
-                filter,
-                jpeg_quality,
-                background,
-            } => Self::Upscale {
-                input,
-                output,
-                scale: ScaleFactor::new(scale)
-                    .map_err(|error| PpError::InvalidOption(error.to_string()))?,
+                scale: ScaleFactor::new(scale).map_err(operation_input_error)?,
                 filter: parse_filter(filter.as_deref(), ResampleFilter::Nearest)?,
                 jpeg_quality: optional_jpeg_quality(jpeg_quality)?,
                 background: background.as_deref().map(parse_background).transpose()?,
             },
-            ApplicationRequest::Normalize {
-                request,
-                output_dir,
-            } => Self::NormalizeSprite {
-                request,
-                output_dir,
-            },
-            ApplicationRequest::Bundle {
-                request,
-                output_dir,
-            } => Self::CompileSprite {
-                request,
-                output_dir,
-            },
+            ApplicationRequest::Normalize { request, output_dir } => Self::NormalizeSprite { request, output_dir },
+            ApplicationRequest::Bundle { request, output_dir } => Self::CompileSprite { request, output_dir },
             ApplicationRequest::Vector {
-                input,
-                output,
-                preset,
-                profile,
-                detail,
-                min_quality,
-                max_quality_loss,
-                max_paths,
-                policy,
-                report,
-                diagnostics,
+                input, output, preset, profile, detail, min_quality, max_quality_loss, max_paths,
+                policy, report, diagnostics,
             } => Self::CompileVector {
                 input,
                 output,
@@ -164,29 +112,19 @@ impl TryFrom<ApplicationRequest> for Operation {
                 minimum_quality: min_quality
                     .map(|value| UnitScore::new(value).map_err(|error| error.to_string()))
                     .transpose()
-                    .map_err(|message| PpError::InvalidOption(message))?,
+                    .map_err(PpError::InvalidOption)?,
                 maximum_quality_loss: max_quality_loss
                     .map(|value| UnitScore::new(value).map_err(|error| error.to_string()))
                     .transpose()
-                    .map_err(|message| PpError::InvalidOption(message))?,
+                    .map_err(PpError::InvalidOption)?,
                 maximum_paths: max_paths
-                    .map(|value| {
-                        NonZeroUsize::new(value).ok_or_else(|| {
-                            PpError::InvalidOption("--max-paths must be a positive integer".to_string())
-                        })
-                    })
+                    .map(|value| NonZeroUsize::new(value).ok_or_else(|| PpError::InvalidOption("--max-paths must be a positive integer".to_string())))
                     .transpose()?,
                 policy,
                 report,
                 diagnostics,
             },
-            ApplicationRequest::VectorAnalyze {
-                input,
-                preset,
-                profile,
-                policy,
-                report,
-            } => Self::AnalyzeVector {
+            ApplicationRequest::VectorAnalyze { input, preset, profile, policy, report } => Self::AnalyzeVector {
                 input,
                 preset: preset
                     .as_deref()
@@ -203,36 +141,20 @@ impl TryFrom<ApplicationRequest> for Operation {
                 policy,
                 report,
             },
-            ApplicationRequest::MotionScaffold { input, output_dir } => Self::ScaffoldMotion {
-                input,
-                output_dir,
-            },
-            ApplicationRequest::MotionBuild {
-                request,
-                output_dir,
-            } => Self::CompileMotion {
-                request,
-                output_dir,
-            },
+            ApplicationRequest::MotionScaffold { input, output_dir } => Self::ScaffoldMotion { input, output_dir },
+            ApplicationRequest::MotionBuild { request, output_dir } => Self::CompileMotion { request, output_dir },
         })
     }
 }
 
 fn optional_nonzero(value: Option<u32>, label: &str) -> PpResult<Option<NonZeroU32>> {
     value
-        .map(|value| {
-            NonZeroU32::new(value).ok_or_else(|| {
-                PpError::InvalidOption(format!("{label} must be a positive integer"))
-            })
-        })
+        .map(|value| NonZeroU32::new(value).ok_or_else(|| PpError::InvalidOption(format!("{label} must be a positive integer"))))
         .transpose()
 }
 
 fn optional_jpeg_quality(value: Option<u8>) -> PpResult<Option<JpegQuality>> {
-    value
-        .map(JpegQuality::new)
-        .transpose()
-        .map_err(operation_input_error)
+    value.map(JpegQuality::new).transpose().map_err(operation_input_error)
 }
 
 fn parse_filter(raw: Option<&str>, default: ResampleFilter) -> PpResult<ResampleFilter> {
@@ -240,9 +162,7 @@ fn parse_filter(raw: Option<&str>, default: ResampleFilter) -> PpResult<Resample
         None => Ok(default),
         Some("nearest") => Ok(ResampleFilter::Nearest),
         Some("lanczos3") => Ok(ResampleFilter::Lanczos3),
-        Some(_) => Err(PpError::InvalidOption(
-            "--filter must be nearest or lanczos3".to_string(),
-        )),
+        Some(_) => Err(PpError::InvalidOption("--filter must be nearest or lanczos3".to_string())),
     }
 }
 
@@ -257,13 +177,8 @@ mod tests {
     #[test]
     fn transport_request_converts_without_argv_roundtrip() -> PpResult<()> {
         let operation = Operation::try_from(ApplicationRequest::Convert {
-            input: "input.png".into(),
-            output: "output.png".into(),
-            width: Some(64),
-            height: None,
-            filter: Some("nearest".to_string()),
-            jpeg_quality: None,
-            background: None,
+            input: "input.png".into(), output: "output.png".into(), width: Some(64), height: None,
+            filter: Some("nearest".to_string()), jpeg_quality: None, background: None,
         })?;
         match operation {
             Operation::Convert { width, filter, .. } => {
@@ -278,12 +193,8 @@ mod tests {
     #[test]
     fn transport_request_rejects_invalid_scalar_state() {
         let result = Operation::try_from(ApplicationRequest::Upscale {
-            input: "input.png".into(),
-            output: "output.png".into(),
-            scale: 1,
-            filter: None,
-            jpeg_quality: None,
-            background: None,
+            input: "input.png".into(), output: "output.png".into(), scale: 1, filter: None,
+            jpeg_quality: None, background: None,
         });
         assert!(result.is_err());
     }
