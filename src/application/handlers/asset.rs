@@ -1,10 +1,10 @@
-use std::{num::NonZeroU32, path::PathBuf};
+use std::{num::NonZeroU32, path::{Path, PathBuf}};
 
 use serde::Serialize;
 
 use crate::{
-    inspect_raster, resize_raster, AtomicFileWriter, DecodeLimits, FilePrecondition, ImageCodec,
-    JpegQuality, PpError, PpResult, ResampleFilter, ScaleFactor,
+    inspect_raster, resize_raster, ArtifactRef, AtomicFileWriter, DecodeLimits, FilePrecondition,
+    ImageCodec, JpegQuality, PixelSpec, PpError, PpResult, ResampleFilter, ScaleFactor,
 };
 
 use super::super::{
@@ -21,16 +21,26 @@ const ASSET_TRANSFORM_SCHEMA: &str = "perfectpixel.asset-transform/1";
 pub(super) fn inspect(input: PathBuf) -> PpResult<String> {
     validate_raster_input_path(&input)?;
     let bytes = read_bytes_limited(&input, MAX_RASTER_READ_BYTES)?;
-    let image = ImageCodec::decode_rgba_bytes(&input, &bytes, DecodeLimits::default())?;
-    let inspection = inspect_raster(&image);
+    let decoded = ImageCodec::decode_rgba_bytes_with_metadata(&input, &bytes, DecodeLimits::default())?;
+    let artifact = ArtifactRef::from_bytes(input_media_type(&input)?, &bytes)?;
+    let pixel_spec = decoded.pixel_spec().clone();
+    let icc_profile_byte_count = decoded
+        .icc_profile()
+        .map(byte_count)
+        .transpose()?
+        .unwrap_or(0);
+    let inspection = inspect_raster(decoded.raster());
     serialize_json(
         &InspectPayload {
             schema: ASSET_INSPECTION_SCHEMA,
             schema_version: 1,
             ok: true,
             input: input.display().to_string(),
-            input_sha256: crate::sha256_hex(&bytes),
-            input_byte_count: byte_count(&bytes)?,
+            input_sha256: artifact.sha256().as_str(),
+            input_byte_count: artifact.bytes(),
+            artifact: &artifact,
+            pixel_spec: &pixel_spec,
+            icc_profile_byte_count,
             inspection,
         },
         "<inspect>",
@@ -135,8 +145,6 @@ impl AssetOperation {
                 "--background is only valid for JPEG output".to_string(),
             ));
         }
-        // Capture destination authority before input decode/resize/encode work. A caller that
-        // races this operation can never be silently overwritten at the final rename.
         let output_precondition = FilePrecondition::capture(&output)?;
         let bytes = read_bytes_limited(&input, MAX_RASTER_READ_BYTES)?;
         let source = ImageCodec::decode_rgba_bytes(&input, &bytes, DecodeLimits::default())?;
@@ -242,6 +250,22 @@ fn byte_count(bytes: &[u8]) -> PpResult<u64> {
         .map_err(|_| PpError::InvalidRequest("asset byte count overflow".to_string()))
 }
 
+fn input_media_type(path: &Path) -> PpResult<&'static str> {
+    match path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("png") => Ok("image/png"),
+        Some("jpg") | Some("jpeg") => Ok("image/jpeg"),
+        Some("webp") => Ok("image/webp"),
+        _ => Err(PpError::InvalidRequest(
+            "asset input must use one of these extensions: png, jpg, jpeg, webp".to_string(),
+        )),
+    }
+}
+
 fn format_name(format: AssetOutputFormat) -> &'static str {
     match format {
         AssetOutputFormat::Png => "png",
@@ -259,13 +283,17 @@ fn filter_name(filter: ResampleFilter) -> &'static str {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct InspectPayload {
+struct InspectPayload<'a> {
     schema: &'static str,
     schema_version: u32,
     ok: bool,
     input: String,
-    input_sha256: String,
+    input_sha256: &'a str,
     input_byte_count: u64,
+    artifact: &'a ArtifactRef,
+    pixel_spec: &'a PixelSpec,
+    icc_profile_byte_count: u64,
+    #[serde(flatten)]
     inspection: crate::RasterInspection,
 }
 
