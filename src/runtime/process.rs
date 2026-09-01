@@ -1,8 +1,9 @@
 use std::{
-    fs,
+    fs::File,
     io::{self, Read},
+    os::unix::{fs::MetadataExt, process::CommandExt},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -16,8 +17,34 @@ use crate::{core::sha256::Sha256State, Sha256Digest};
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct FileIdentity {
+    device: u64,
+    inode: u64,
+    bytes: u64,
+}
+
+impl FileIdentity {
+    fn from_file(file: &File) -> Result<Self, ProcessRunError> {
+        let metadata = file
+            .metadata()
+            .map_err(|error| ProcessRunError::Io(format!("stat executable handle: {error}")))?;
+        if !metadata.is_file() {
+            return Err(ProcessRunError::InvalidExecutable(
+                "external executable must be a regular file".to_string(),
+            ));
+        }
+        Ok(Self {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            bytes: metadata.len(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PinnedExecutable {
     canonical_path: PathBuf,
+    identity: FileIdentity,
     sha256: Sha256Digest,
 }
 
@@ -29,24 +56,40 @@ impl PinnedExecutable {
                 "external executable path must be absolute".to_string(),
             ));
         }
-        let canonical_path = fs::canonicalize(path)
-            .map_err(|error| ProcessRunError::Io(format!("canonicalize executable: {error}")))?;
-        let metadata = fs::symlink_metadata(&canonical_path)
-            .map_err(|error| ProcessRunError::Io(format!("stat executable: {error}")))?;
-        if metadata.file_type().is_symlink() || !metadata.is_file() {
-            return Err(ProcessRunError::InvalidExecutable(
-                "external executable must resolve to a regular non-symlink file".to_string(),
-            ));
-        }
-        let actual = digest_file(&canonical_path)?;
-        if actual != sha256 {
+
+        // The caller-supplied path is opened through the no-follow capability
+        // boundary before canonicalization. This rejects symlink components
+        // instead of validating a pathname and reopening it later.
+        let original = open_executable(path)?;
+        let original_identity = FileIdentity::from_file(&original)?;
+        let original_digest = digest_handle(original)?;
+        if original_digest != sha256 {
             return Err(ProcessRunError::ExecutableDigestMismatch {
                 expected: sha256,
-                actual,
+                actual: original_digest,
             });
         }
+
+        let canonical_path = std::fs::canonicalize(path)
+            .map_err(|error| ProcessRunError::Io(format!("canonicalize executable: {error}")))?;
+        let canonical = open_executable(&canonical_path)?;
+        let canonical_identity = FileIdentity::from_file(&canonical)?;
+        if canonical_identity != original_identity {
+            return Err(ProcessRunError::ExecutableChanged(
+                "executable identity changed while it was pinned".to_string(),
+            ));
+        }
+        let canonical_digest = digest_handle(canonical)?;
+        if canonical_digest != sha256 {
+            return Err(ProcessRunError::ExecutableDigestMismatch {
+                expected: sha256,
+                actual: canonical_digest,
+            });
+        }
+
         Ok(Self {
             canonical_path,
+            identity: canonical_identity,
             sha256,
         })
     }
@@ -60,14 +103,14 @@ impl PinnedExecutable {
     }
 
     fn revalidate(&self) -> Result<(), ProcessRunError> {
-        let metadata = fs::symlink_metadata(&self.canonical_path)
-            .map_err(|error| ProcessRunError::Io(format!("stat executable: {error}")))?;
-        if metadata.file_type().is_symlink() || !metadata.is_file() {
+        let file = open_executable(&self.canonical_path)?;
+        let identity = FileIdentity::from_file(&file)?;
+        if identity != self.identity {
             return Err(ProcessRunError::ExecutableChanged(
-                "pinned executable is no longer a regular file".to_string(),
+                "pinned executable filesystem identity changed".to_string(),
             ));
         }
-        let actual = digest_file(&self.canonical_path)?;
+        let actual = digest_handle(file)?;
         if actual != self.sha256 {
             return Err(ProcessRunError::ExecutableDigestMismatch {
                 expected: self.sha256.clone(),
@@ -82,7 +125,6 @@ impl PinnedExecutable {
 pub struct ProcessSpec {
     pub executable: PinnedExecutable,
     pub args: Vec<String>,
-    pub current_dir: Option<PathBuf>,
     /// The process inherits no ambient environment. Every required variable is explicit here.
     pub environment: Vec<(String, String)>,
     pub timeout: Duration,
@@ -108,21 +150,11 @@ impl ProcessSpec {
             ));
         }
         if self.environment.iter().any(|(key, value)| {
-            key.is_empty()
-                || key.contains('=')
-                || key.contains('\0')
-                || value.contains('\0')
+            key.is_empty() || key.contains('=') || key.contains('\0') || value.contains('\0')
         }) {
             return Err(ProcessRunError::InvalidRequest(
                 "external process environment contains an invalid key or NUL".to_string(),
             ));
-        }
-        if let Some(current_dir) = &self.current_dir {
-            if !current_dir.is_absolute() {
-                return Err(ProcessRunError::InvalidRequest(
-                    "external process working directory must be absolute".to_string(),
-                ));
-            }
         }
         Ok(())
     }
@@ -214,13 +246,23 @@ pub fn run_process(
         .envs(spec.environment.iter().map(|(key, value)| (key, value)))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    if let Some(current_dir) = &spec.current_dir {
-        command.current_dir(current_dir);
-    }
+        .stderr(Stdio::piped())
+        // One Effect owns one process group. Cancellation, timeout, and normal
+        // leader exit all reap/terminate the complete descendant group so a
+        // helper cannot outlive the Result/Event returned to the domain.
+        .process_group(0);
+
+    // This is the final check before the pathname-based exec performed by
+    // std::process. The remaining check->exec window is documented as a macOS
+    // platform residual because Darwin exposes execve/posix_spawn by pathname,
+    // not a stable executable-fd API.
+    spec.executable.revalidate()?;
     let mut child = command
         .spawn()
         .map_err(|error| ProcessRunError::Io(format!("spawn: {error}")))?;
+    let process_group = i32::try_from(child.id())
+        .map_err(|_| ProcessRunError::Io("child PID exceeds pid_t range".to_string()))?;
+
     let stdout = child
         .stdout
         .take()
@@ -237,13 +279,11 @@ pub fn run_process(
     let started = Instant::now();
     let termination = loop {
         if cancellation.is_cancelled() {
-            let _ = child.kill();
-            let _ = child.wait();
+            terminate_group_and_wait(process_group, &mut child, "cancel")?;
             break ProcessTermination::Cancelled;
         }
         if started.elapsed() >= spec.timeout {
-            let _ = child.kill();
-            let _ = child.wait();
+            terminate_group_and_wait(process_group, &mut child, "timeout")?;
             break ProcessTermination::TimedOut;
         }
         match child
@@ -251,10 +291,13 @@ pub fn run_process(
             .map_err(|error| ProcessRunError::Io(format!("wait: {error}")))?
         {
             Some(status) => {
+                // The direct child is done, but descendants may still own stdout/stderr.
+                // Terminate the now-orphaned group before joining readers.
+                terminate_process_group(process_group)?;
                 break status
                     .code()
                     .map(ProcessTermination::Exited)
-                    .unwrap_or(ProcessTermination::Signaled)
+                    .unwrap_or(ProcessTermination::Signaled);
             }
             None => thread::sleep(POLL_INTERVAL),
         }
@@ -272,6 +315,35 @@ pub fn run_process(
     })
 }
 
+fn terminate_group_and_wait(
+    process_group: i32,
+    child: &mut Child,
+    reason: &str,
+) -> Result<(), ProcessRunError> {
+    terminate_process_group(process_group).map_err(|error| {
+        ProcessRunError::Io(format!("{reason}: failed to terminate process group: {error}"))
+    })?;
+    child
+        .wait()
+        .map_err(|error| ProcessRunError::Io(format!("{reason}: wait after termination: {error}")))?;
+    Ok(())
+}
+
+fn terminate_process_group(process_group: i32) -> io::Result<()> {
+    // Negative pid targets the complete process group. ESRCH is idempotent success:
+    // the group disappeared between observation and termination.
+    let result = unsafe { libc::kill(-process_group, libc::SIGKILL) };
+    if result == 0 {
+        return Ok(());
+    }
+    let error = io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        Ok(())
+    } else {
+        Err(error)
+    }
+}
+
 fn join_reader(
     handle: thread::JoinHandle<io::Result<(Vec<u8>, bool)>>,
 ) -> Result<(Vec<u8>, bool), ProcessRunError> {
@@ -281,10 +353,7 @@ fn join_reader(
         .map_err(|error| ProcessRunError::Reader(error.to_string()))
 }
 
-fn read_bounded_to_eof(
-    mut reader: impl Read,
-    limit: usize,
-) -> io::Result<(Vec<u8>, bool)> {
+fn read_bounded_to_eof(mut reader: impl Read, limit: usize) -> io::Result<(Vec<u8>, bool)> {
     let mut kept = Vec::with_capacity(limit.min(64 * 1024));
     let mut buffer = [0u8; 16 * 1024];
     let mut truncated = false;
@@ -301,9 +370,12 @@ fn read_bounded_to_eof(
     Ok((kept, truncated))
 }
 
-fn digest_file(path: &Path) -> Result<Sha256Digest, ProcessRunError> {
-    let mut file = fs::File::open(path)
-        .map_err(|error| ProcessRunError::Io(format!("open executable: {error}")))?;
+fn open_executable(path: &Path) -> Result<File, ProcessRunError> {
+    crate::io::capability::open_read(path)
+        .map_err(|error| ProcessRunError::Io(format!("open executable: {error}")))
+}
+
+fn digest_handle(mut file: File) -> Result<Sha256Digest, ProcessRunError> {
     let mut state = Sha256State::new();
     let mut buffer = [0u8; 64 * 1024];
     loop {
@@ -331,7 +403,7 @@ mod tests {
     }
 
     #[test]
-    fn process_spec_rejects_ambient_or_malformed_environment_state() {
+    fn process_spec_rejects_malformed_environment_state() {
         let invalid = vec![("A=B".to_string(), "value".to_string())];
         assert!(invalid.iter().any(|(key, _)| key.contains('=')));
     }
