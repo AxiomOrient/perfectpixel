@@ -8,6 +8,7 @@ use crate::core::{
 };
 
 const MAX_ICC_PROFILE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_ENCODED_IMAGE_BYTES: usize = 320 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DecodeLimits {
@@ -89,11 +90,16 @@ impl ImageCodec {
         limits: DecodeLimits,
     ) -> PpResult<DecodedRaster> {
         let path = path.as_ref();
-        let reader = ImageReader::open(path).map_err(|source| PpError::FileIo {
-            path: path.to_path_buf(),
-            message: source.to_string(),
-        })?;
-        decode_reader(path, reader, limits)
+        // Path decoding is just a convenience over the same immutable byte-snapshot
+        // decoder used by generation workflows. No image decoder is allowed to reopen
+        // an ambient pathname after validation.
+        let bytes = super::capability::read_bounded(path, MAX_ENCODED_IMAGE_BYTES).map_err(
+            |source| PpError::FileIo {
+                path: path.to_path_buf(),
+                message: source.to_string(),
+            },
+        )?;
+        Self::decode_rgba_bytes_with_metadata(path, &bytes, limits)
     }
 
     /// Decodes the exact immutable byte snapshot supplied by an I/O adapter.
