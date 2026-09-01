@@ -10,6 +10,8 @@ mod effects;
 #[cfg(unix)]
 mod io;
 #[cfg(unix)]
+mod operation;
+#[cfg(unix)]
 mod vector;
 
 #[cfg(unix)]
@@ -74,6 +76,11 @@ pub use io::{
 pub use io::{
     AtomicDirectoryEntry, AtomicDirectoryWriter, AtomicFileWriter, DecodeLimits, DecodedRaster,
     ImageCodec, PngEncoder,
+};
+#[cfg(unix)]
+pub use operation::{
+    FailureContext, JpegQuality, Operation, OperationErrorCode, OperationFailure,
+    OperationInputError, OperationSpec, ScaleFactor, SideEffectClass,
 };
 #[cfg(unix)]
 pub use vector::{
