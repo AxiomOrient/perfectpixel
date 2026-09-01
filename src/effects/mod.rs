@@ -1,6 +1,8 @@
+mod apple_vision;
 mod external;
 mod texture;
 
+pub use apple_vision::*;
 pub use external::*;
 pub use texture::*;
 
