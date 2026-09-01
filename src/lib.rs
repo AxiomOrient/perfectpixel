@@ -67,8 +67,17 @@ pub use core::{
     PSD_MAX_KNOTS, PSD_MAX_OUTPUT_BYTES, VERIFICATION_REPORT_SCHEMA,
 };
 #[cfg(unix)]
+pub(crate) use core::{
+    inspect_ktx2, verify_ktx2_contract, Ktx2Info, ResolvedDocumentRaster, TextureSemantic,
+};
+#[cfg(unix)]
 pub use effects::{
     EffectCompletion, EffectFailure, EffectFailureCode, EffectIdentity, EffectResult,
+};
+#[cfg(unix)]
+pub(crate) use effects::{
+    run_ktx2_effect, run_ktx2_extract_effect, ExternalToolReceipt, Ktx2EffectRequest,
+    Ktx2ExtractRequest, KtxEncoding,
 };
 #[cfg(unix)]
 #[doc(hidden)]
@@ -82,6 +91,8 @@ pub use io::{
     AtomicDirectoryEntry, AtomicDirectoryWriter, AtomicFileWriter, DecodeLimits, DecodedRaster,
     FilePrecondition, ImageCodec, PngEncoder,
 };
+#[cfg(unix)]
+pub(crate) use io::{publish_directory_checked, DirectoryPrecondition};
 #[cfg(unix)]
 pub use operation::{
     operation_specs, parse_resample_filter, parse_unit_score, parse_vector_detail,
