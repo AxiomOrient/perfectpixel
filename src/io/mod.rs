@@ -1,5 +1,6 @@
 mod artifact_set;
 mod atomic;
+mod capability;
 mod codec;
 mod parallel;
 mod png;
