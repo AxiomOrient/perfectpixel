@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::{linear16_to_srgb8, srgb8_to_linear16, PpError, PpResult, Raster};
+use crate::{linear16_to_srgb8, parse_srgb8_hex, srgb8_to_linear16, PpError, PpResult, Raster};
 use image::{
     codecs::{
         jpeg::JpegEncoder as ImageJpegEncoder, png::PngEncoder as ImagePngEncoder,
@@ -50,18 +50,9 @@ pub(super) fn encode_raster(image: &Raster, options: AssetEncodeOptions) -> PpRe
 }
 
 pub(super) fn parse_background(raw: &str) -> PpResult<[u8; 3]> {
-    let Some(hex) = raw.strip_prefix('#') else {
-        return Err(PpError::InvalidOption(
-            "--background must be a #RRGGBB color".to_string(),
-        ));
-    };
-    if hex.len() != 6 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(PpError::InvalidOption(
-            "--background must be a #RRGGBB color".to_string(),
-        ));
-    }
-    let channel = |range| u8::from_str_radix(&hex[range], 16).expect("validated hexadecimal");
-    Ok([channel(0..2), channel(2..4), channel(4..6)])
+    parse_srgb8_hex(raw).ok_or_else(|| {
+        PpError::InvalidOption("--background must be a #RRGGBB color".to_string())
+    })
 }
 
 fn encode_png(image: &Raster) -> PpResult<Vec<u8>> {
