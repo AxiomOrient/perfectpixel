@@ -35,6 +35,17 @@ pub fn composite_source_over_linear_srgb(
 }
 
 fn composite_pixel(backdrop: &[u8], source: &[u8], output: &mut [u8], blend: BlendMode) {
+    // Exact algebraic identity/replacement cases bypass fixed-point round trips. This keeps
+    // publication bytes byte-for-byte stable where source-over mathematically promises it.
+    if source[3] == 0 {
+        output.copy_from_slice(backdrop);
+        return;
+    }
+    if source[3] == 255 && blend == BlendMode::Normal {
+        output.copy_from_slice(source);
+        return;
+    }
+
     let alpha_backdrop = u32::from(backdrop[3]) * 257;
     let alpha_source = u32::from(source[3]) * 257;
     let one_minus_source = 65_535 - alpha_source;
