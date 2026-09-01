@@ -70,41 +70,56 @@ pub fn run_ktx2_effect(
 ) -> EffectResult<ExternalArtifactCandidate> {
     execute_candidate_effect(
         &request.identity,
+        "texture.encode_ktx2",
         "ktx",
         &request.executable,
         &request.input,
         &request.staging_output,
-        ktx_arguments(request),
+        ktx_arguments(
+            &request.input,
+            &request.staging_output,
+            request.encoding,
+            request.generate_mipmaps,
+            request.srgb,
+        ),
         request.timeout,
         "image/ktx2",
         cancellation,
     )
 }
 
-fn ktx_arguments(request: &Ktx2EffectRequest) -> Vec<String> {
+fn ktx_arguments(
+    input: &Path,
+    output: &Path,
+    encoding: KtxEncoding,
+    generate_mipmaps: bool,
+    srgb: bool,
+) -> Vec<String> {
     let mut args = vec![
         "create".to_string(),
         "--format".to_string(),
-        if request.srgb {
+        if srgb {
             "R8G8B8A8_SRGB".to_string()
         } else {
             "R8G8B8A8_UNORM".to_string()
         },
         "--encode".to_string(),
-        request.encoding.cli_value().to_string(),
+        encoding.cli_value().to_string(),
         "--threads".to_string(),
         "1".to_string(),
         "--fail-on-color-conversions".to_string(),
     ];
-    if request.generate_mipmaps {
-        args.push("--generate-mipmap".to_string());
-        args.push("--mipmap-filter".to_string());
-        args.push("lanczos4".to_string());
-        args.push("--mipmap-wrap".to_string());
-        args.push("clamp".to_string());
+    if generate_mipmaps {
+        args.extend([
+            "--generate-mipmap".to_string(),
+            "--mipmap-filter".to_string(),
+            "lanczos4".to_string(),
+            "--mipmap-wrap".to_string(),
+            "clamp".to_string(),
+        ]);
     }
-    args.push(request.input.to_string_lossy().into_owned());
-    args.push(request.staging_output.to_string_lossy().into_owned());
+    args.push(input.to_string_lossy().into_owned());
+    args.push(output.to_string_lossy().into_owned());
     args
 }
 
@@ -170,13 +185,16 @@ pub fn run_vtracer_effect(
     if let Err(error) = request.validate() {
         return failure(
             request.identity.clone(),
-            EffectFailureCode::InvalidRequest,
+            "vector.vtracer_candidate",
+            "vtracer",
+            EffectFailureCode::InvalidArgument,
             error.to_string(),
             false,
         );
     }
     execute_candidate_effect(
         &request.identity,
+        "vector.vtracer_candidate",
         "vtracer",
         &request.executable,
         &request.input,
@@ -194,24 +212,19 @@ fn vtracer_arguments(request: &VTracerEffectRequest) -> Vec<String> {
         request.staging_output.to_string_lossy().into_owned(),
     ];
     if let Some(preset) = request.preset {
-        args.push("--preset".to_string());
-        args.push(preset.cli_value().to_string());
+        args.extend(["--preset".to_string(), preset.cli_value().to_string()]);
     }
     if let Some(value) = request.simplify {
-        args.push("--simplify".to_string());
-        args.push(value.to_string());
+        args.extend(["--simplify".to_string(), value.to_string()]);
     }
     if let Some(value) = request.path_precision {
-        args.push("--path-precision".to_string());
-        args.push(value.to_string());
+        args.extend(["--path-precision".to_string(), value.to_string()]);
     }
     if let Some(value) = request.max_colors {
-        args.push("--max-colors".to_string());
-        args.push(value.to_string());
+        args.extend(["--max-colors".to_string(), value.to_string()]);
     }
     if let Some(value) = request.optimize {
-        args.push("--optimize".to_string());
-        args.push(value.to_string());
+        args.extend(["--optimize".to_string(), value.to_string()]);
     }
     args
 }
@@ -254,7 +267,8 @@ pub fn run_apple_vision_foreground_mask_effect(
     ];
     execute_candidate_effect(
         &request.identity,
-        "apple-vision-foreground-mask",
+        "mask.apple_vision_foreground",
+        "perfectpixel-vision-helper",
         &request.executable,
         &request.input,
         &request.staging_output,
@@ -268,7 +282,8 @@ pub fn run_apple_vision_foreground_mask_effect(
 #[allow(clippy::too_many_arguments)]
 fn execute_candidate_effect(
     identity: &EffectIdentity,
-    tool: &str,
+    operation: &str,
+    dependency: &str,
     executable: &PinnedExecutable,
     input: &Path,
     staging_output: &Path,
@@ -280,7 +295,9 @@ fn execute_candidate_effect(
     if let Err(error) = validate_effect_paths(input, staging_output) {
         return failure(
             identity.clone(),
-            EffectFailureCode::InvalidRequest,
+            operation,
+            dependency,
+            EffectFailureCode::InvalidArgument,
             error.to_string(),
             false,
         );
@@ -300,9 +317,7 @@ fn execute_candidate_effect(
     };
     let output = match run_process(&spec, cancellation) {
         Ok(output) => output,
-        Err(error) => {
-            return process_error(identity.clone(), error);
-        }
+        Err(error) => return process_error(identity.clone(), operation, dependency, error),
     };
     match output.termination {
         ProcessTermination::Cancelled => {
@@ -314,16 +329,20 @@ fn execute_candidate_effect(
         ProcessTermination::TimedOut => {
             return failure(
                 identity.clone(),
+                operation,
+                dependency,
                 EffectFailureCode::Timeout,
-                format!("{tool} exceeded timeout"),
+                format!("{dependency} exceeded timeout"),
                 true,
             );
         }
         ProcessTermination::Signaled => {
             return failure(
                 identity.clone(),
+                operation,
+                dependency,
                 EffectFailureCode::DependencyFailed,
-                format!("{tool} terminated by signal"),
+                format!("{dependency} terminated by signal"),
                 true,
             );
         }
@@ -331,8 +350,10 @@ fn execute_candidate_effect(
             let stderr = String::from_utf8_lossy(&output.stderr);
             return failure(
                 identity.clone(),
+                operation,
+                dependency,
                 EffectFailureCode::DependencyFailed,
-                format!("{tool} exited with {code}: {}", stderr.trim()),
+                format!("{dependency} exited with {code}: {}", stderr.trim()),
                 false,
             );
         }
@@ -343,6 +364,8 @@ fn execute_candidate_effect(
         Err(error) => {
             return failure(
                 identity.clone(),
+                operation,
+                dependency,
                 EffectFailureCode::DependencyFailed,
                 error.to_string(),
                 false,
@@ -354,28 +377,33 @@ fn execute_candidate_effect(
         Err(error) => {
             return failure(
                 identity.clone(),
+                operation,
+                dependency,
                 EffectFailureCode::Internal,
                 error.to_string(),
                 false,
             );
         }
     };
-    let arguments_sha256 = Sha256Digest::from_bytes(canonical_arguments(&args).as_bytes());
     EffectResult {
         identity: identity.clone(),
-        completion: EffectCompletion::Succeeded(ExternalArtifactCandidate {
-            artifact,
-            bytes,
-            receipt: ExternalToolReceipt {
-                tool: tool.to_string(),
-                executable_sha256: executable.sha256().clone(),
-                arguments_sha256,
-                stdout_sha256: Sha256Digest::from_bytes(&output.stdout),
-                stderr_sha256: Sha256Digest::from_bytes(&output.stderr),
-                stdout_truncated: output.stdout_truncated,
-                stderr_truncated: output.stderr_truncated,
+        completion: EffectCompletion::Succeeded {
+            value: ExternalArtifactCandidate {
+                artifact,
+                bytes,
+                receipt: ExternalToolReceipt {
+                    tool: dependency.to_string(),
+                    executable_sha256: executable.sha256().clone(),
+                    arguments_sha256: Sha256Digest::from_bytes(
+                        canonical_arguments(&args).as_bytes(),
+                    ),
+                    stdout_sha256: Sha256Digest::from_bytes(&output.stdout),
+                    stderr_sha256: Sha256Digest::from_bytes(&output.stderr),
+                    stdout_truncated: output.stdout_truncated,
+                    stderr_truncated: output.stderr_truncated,
+                },
             },
-        }),
+        },
     }
 }
 
@@ -390,13 +418,17 @@ fn validate_effect_paths(input: &Path, staging_output: &Path) -> PpResult<()> {
             "external Effect staging output must not overwrite input".to_string(),
         ));
     }
-    let input_metadata = fs::symlink_metadata(input).map_err(|error| PpError::FileIo {
+    let canonical_input = fs::canonicalize(input).map_err(|error| PpError::FileIo {
         path: input.to_path_buf(),
+        message: error.to_string(),
+    })?;
+    let input_metadata = fs::symlink_metadata(&canonical_input).map_err(|error| PpError::FileIo {
+        path: canonical_input,
         message: error.to_string(),
     })?;
     if input_metadata.file_type().is_symlink() || !input_metadata.is_file() {
         return Err(PpError::InvalidRequest(
-            "external Effect input must be a regular non-symlink file".to_string(),
+            "external Effect input must resolve to a regular file".to_string(),
         ));
     }
     match fs::symlink_metadata(staging_output) {
@@ -425,7 +457,10 @@ fn validate_effect_paths(input: &Path, staging_output: &Path) -> PpResult<()> {
             "external Effect staging parent must be a regular non-symlink directory".to_string(),
         ));
     }
-    if staging_output.components().any(|component| matches!(component, Component::ParentDir)) {
+    if staging_output
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
         return Err(PpError::InvalidRequest(
             "external Effect staging output must not contain '..'".to_string(),
         ));
@@ -472,32 +507,50 @@ fn canonical_arguments(args: &[String]) -> String {
     canonical
 }
 
-fn process_error<T>(identity: EffectIdentity, error: ProcessRunError) -> EffectResult<T> {
+fn process_error<T>(
+    identity: EffectIdentity,
+    operation: &str,
+    dependency: &str,
+    error: ProcessRunError,
+) -> EffectResult<T> {
     let code = match error {
         ProcessRunError::InvalidRequest(_) | ProcessRunError::InvalidExecutable(_) => {
-            EffectFailureCode::InvalidRequest
+            EffectFailureCode::InvalidArgument
         }
         ProcessRunError::ExecutableDigestMismatch { .. }
         | ProcessRunError::ExecutableChanged(_) => EffectFailureCode::PreconditionFailed,
         ProcessRunError::Io(_) | ProcessRunError::Reader(_) => EffectFailureCode::DependencyFailed,
     };
-    failure(identity, code, error.to_string(), false)
+    failure(
+        identity,
+        operation,
+        dependency,
+        code,
+        error.to_string(),
+        false,
+    )
 }
 
 fn failure<T>(
     identity: EffectIdentity,
+    operation: &str,
+    dependency: &str,
     code: EffectFailureCode,
     cause: String,
     retryable: bool,
 ) -> EffectResult<T> {
     EffectResult {
         identity,
-        completion: EffectCompletion::Failed(EffectFailure {
-            code,
-            cause,
-            context: Vec::new(),
-            retryable,
-        }),
+        completion: EffectCompletion::Failed {
+            error: EffectFailure {
+                code,
+                operation: operation.to_string(),
+                dependency: dependency.to_string(),
+                retryable,
+                cause,
+                context: Vec::new(),
+            },
+        },
     }
 }
 
@@ -506,34 +559,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ktx_effect_forces_single_thread_and_fail_closed_color_conversion() -> PpResult<()> {
-        let executable_digest = Sha256Digest::from_bytes(b"tool");
-        let identity = EffectIdentity::new(1, Sha256Digest::from_bytes(b"op"), Sha256Digest::from_bytes(b"input"))?;
-        let request = Ktx2EffectRequest {
-            identity,
-            executable: PinnedExecutable::new("/definitely/not/a/tool", executable_digest)
-                .expect_err("fixture path is intentionally absent")
-                .into_pinned_for_test(),
-            input: "/tmp/in.png".into(),
-            staging_output: "/tmp/out.ktx2".into(),
-            encoding: KtxEncoding::Uastc,
-            generate_mipmaps: true,
-            srgb: true,
-            timeout: Duration::from_secs(1),
-        };
-        let args = ktx_arguments(&request);
+    fn ktx_arguments_force_determinism_and_fail_closed_color() {
+        let args = ktx_arguments(
+            Path::new("/tmp/in.png"),
+            Path::new("/tmp/out.ktx2"),
+            KtxEncoding::Uastc,
+            true,
+            true,
+        );
         assert!(args.windows(2).any(|pair| pair == ["--threads", "1"]));
         assert!(args.iter().any(|value| value == "--fail-on-color-conversions"));
-        Ok(())
+        assert!(args.iter().any(|value| value == "--generate-mipmap"));
     }
 
-    trait TestPinnedExecutable {
-        fn into_pinned_for_test(self) -> PinnedExecutable;
-    }
-
-    impl TestPinnedExecutable for ProcessRunError {
-        fn into_pinned_for_test(self) -> PinnedExecutable {
-            panic!("test fixture should never need a real executable: {self}")
-        }
+    #[test]
+    fn canonical_argument_digest_is_boundary_unambiguous() {
+        assert_ne!(
+            canonical_arguments(&["ab".to_string(), "c".to_string()]),
+            canonical_arguments(&["a".to_string(), "bc".to_string()])
+        );
     }
 }
