@@ -141,13 +141,16 @@ const COMPILE_VECTOR_SPEC: OperationSpec = spec(
     None,
     CAP_PUBLISH,
 );
+// `vector-analyze` is read-only only when no report path is requested. Operation metadata is
+// deliberately conservative because the registry is the capability/risk authority for the whole
+// operation, not a transport-specific guess about one invocation.
 const ANALYZE_VECTOR_SPEC: OperationSpec = spec(
     "vector.analyze",
-    "Analyze vectorization without publishing SVG",
-    SideEffectClass::Read,
-    OperationRisk::LocalRead,
+    "Analyze vectorization and optionally publish a report",
+    SideEffectClass::Publish,
+    OperationRisk::LocalMutation,
     None,
-    CAP_READ,
+    CAP_PUBLISH,
 );
 const APPLE_VISION_FOREGROUND_SPEC: OperationSpec = spec(
     "vision.apple.foreground_instances",
@@ -193,8 +196,6 @@ const OPERATION_SPECS: &[OperationSpec] = &[
     COMPILE_MOTION_SPEC,
 ];
 
-/// Single metadata/schema/risk authority. Transports may select an operation, but they do not own
-/// semantic policy independently of this registry.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OperationRegistry;
 
@@ -238,10 +239,10 @@ pub struct ScaleFactor(NonZeroU32);
 
 impl ScaleFactor {
     pub fn new(value: u32) -> Result<Self, OperationInputError> {
-        if value < 2 {
-            return Err(OperationInputError::new("upscale factor must be >= 2"));
-        }
-        Ok(Self(NonZeroU32::new(value).expect("value >= 2")))
+        let value = NonZeroU32::new(value)
+            .filter(|value| value.get() >= 2)
+            .ok_or_else(|| OperationInputError::new("upscale factor must be >= 2"))?;
+        Ok(Self(value))
     }
 
     pub fn get(self) -> u32 {
@@ -325,9 +326,6 @@ pub fn parse_unit_score(value: &str) -> Result<UnitScore, OperationInputError> {
     UnitScore::new(parsed).map_err(|error| OperationInputError::new(error.to_string()))
 }
 
-/// Single semantic command authority shared by transports. Paths identify requested I/O but no
-/// file is read while constructing this state. Request-driven external/document operations keep
-/// transport parsing thin; their strict schemas are parsed by the application handler once.
 pub enum Operation {
     Schema,
     Inspect {
@@ -499,10 +497,17 @@ mod tests {
     #[test]
     fn operation_registry_has_one_unique_owner() {
         let registry = OperationRegistry::global();
-        let names = registry.specs().iter().map(|spec| spec.name).collect::<BTreeSet<_>>();
+        let names = registry
+            .specs()
+            .iter()
+            .map(|spec| spec.name)
+            .collect::<BTreeSet<_>>();
         assert_eq!(names.len(), registry.specs().len());
         assert_eq!(registry.specs().len(), 16);
-        assert_eq!(registry.find("document.compile_psd"), Some(COMPILE_DOCUMENT_PSD_SPEC));
+        assert_eq!(
+            registry.find("document.compile_psd"),
+            Some(COMPILE_DOCUMENT_PSD_SPEC)
+        );
         assert_eq!(registry.find("texture.compile"), Some(COMPILE_TEXTURE_SPEC));
         assert_eq!(
             registry.find("vision.apple.foreground_instances"),
@@ -511,16 +516,26 @@ mod tests {
     }
 
     #[test]
-    fn operation_metadata_has_one_owner() {
-        let operation = Operation::Inspect {
+    fn operation_metadata_matches_reachable_effects() {
+        let inspect = Operation::Inspect {
             input: "a.png".into(),
-        };
-        let spec = operation.spec();
-        assert_eq!(spec.name, "image.inspect");
-        assert_eq!(spec.side_effect, SideEffectClass::Read);
-        assert_eq!(spec.risk, OperationRisk::LocalRead);
-        assert_eq!(spec.capabilities, &["filesystem.read"]);
-        assert_eq!(operation_specs()[1], spec);
+        }
+        .spec();
+        assert_eq!(inspect.side_effect, SideEffectClass::Read);
+        assert_eq!(inspect.risk, OperationRisk::LocalRead);
+        assert_eq!(inspect.capabilities, &["filesystem.read"]);
+
+        let analyze = Operation::AnalyzeVector {
+            input: "a.png".into(),
+            preset: VectorPresetSelection::Auto,
+            profile: SvgProfile::Compact,
+            policy: None,
+            report: None,
+        }
+        .spec();
+        assert_eq!(analyze.side_effect, SideEffectClass::Publish);
+        assert_eq!(analyze.risk, OperationRisk::LocalMutation);
+        assert_eq!(analyze.capabilities, &["filesystem.read", "filesystem.publish"]);
     }
 
     #[test]
