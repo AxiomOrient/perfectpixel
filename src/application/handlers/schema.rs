@@ -1,15 +1,14 @@
 use serde::Serialize;
 
 use crate::{
-    Operation, PpResult, CHROMA_CANDIDATE_PALETTE, CHROMA_PLAN_METRIC, CHROMA_PLAN_SCHEMA,
-    MOTION_SCHEMA, PSD_DEFAULT_ALPHA_THRESHOLD, PSD_DEFAULT_MAX_KNOTS, PSD_EXPORT_SCHEMA,
-    PSD_MAX_DIMENSION, PSD_MAX_KNOTS,
+    Operation, OperationRisk, PpResult, SideEffectClass, CHROMA_CANDIDATE_PALETTE,
+    CHROMA_PLAN_METRIC, CHROMA_PLAN_SCHEMA, MOTION_SCHEMA, PSD_DEFAULT_ALPHA_THRESHOLD,
+    PSD_DEFAULT_MAX_KNOTS, PSD_EXPORT_SCHEMA, PSD_MAX_DIMENSION, PSD_MAX_KNOTS,
 };
 
 use super::super::shared::serialize_json;
 
 pub(super) fn schema() -> PpResult<String> {
-    let operations = operation_specs();
     serialize_json(
         &SchemaPayload {
             cli_version: env!("CARGO_PKG_VERSION"),
@@ -33,7 +32,7 @@ pub(super) fn schema() -> PpResult<String> {
                 "motion-scaffold",
                 "motion-build",
             ],
-            operations,
+            operations: operation_specs(),
             normalize_schema: crate::NORMALIZE_SCHEMA,
             normalize_outputs: &[
                 "normalize-report.json",
@@ -127,6 +126,57 @@ pub(super) fn schema() -> PpResult<String> {
                 candidate_palette: &CHROMA_CANDIDATE_PALETTE,
                 candidate_count: CHROMA_CANDIDATE_PALETTE.len(),
                 metric: CHROMA_PLAN_METRIC,
+                output: &[
+                    "schema",
+                    "schemaVersion",
+                    "ok",
+                    "operation",
+                    "subjectRgbColors",
+                    "metric",
+                    "selectedRgb",
+                    "selectedHex",
+                    "minDistance",
+                    "candidateScores",
+                ],
+            },
+            vector_command: VectorCommandSchema {
+                arguments: &["<input.png|jpg|jpeg|webp>"],
+                options: &[
+                    "--out",
+                    "--preset",
+                    "--profile",
+                    "--detail",
+                    "--min-quality",
+                    "--max-quality-loss",
+                    "--max-paths",
+                    "--policy",
+                    "--report",
+                    "--diagnostics",
+                ],
+                defaults: VectorGenerationDefaults {
+                    preset: "auto",
+                    profile: "compact",
+                    detail: "auto",
+                    min_quality: None,
+                    max_quality_loss: None,
+                    max_paths: None,
+                },
+                publication_order: &["report", "diagnostics", "finalSvg"],
+                artifact_order: &[
+                    "candidate.svg (image/svg+xml)",
+                    "render-back.png (image/png)",
+                ],
+            },
+            vector_analyze_command: VectorAnalyzeCommandSchema {
+                arguments: &["<input.png|jpg|jpeg|webp>"],
+                options: &["--preset", "--profile", "--policy", "--report"],
+                defaults: VectorAnalysisDefaults {
+                    preset: "auto",
+                    profile: "compact",
+                },
+                publication_order: &["report"],
+                artifact_order: &[],
+                publishes_svg: false,
             },
             vector_authority: "Embedded routes and thresholds are immutable; --policy may only select or tighten request constraints.",
             packing_defaults: PackingDefaultsPayload {
@@ -146,41 +196,91 @@ pub(super) fn schema() -> PpResult<String> {
 fn operation_specs() -> Vec<OperationSchema> {
     let specs = [
         Operation::Schema.spec(),
-        Operation::Inspect { input: Default::default() }.spec(),
+        Operation::Inspect {
+            input: Default::default(),
+        }
+        .spec(),
         Operation::Convert {
-            input: Default::default(), output: Default::default(), width: None, height: None,
-            filter: None, jpeg_quality: None, background: None,
-        }.spec(),
+            input: Default::default(),
+            output: Default::default(),
+            width: None,
+            height: None,
+            filter: None,
+            jpeg_quality: None,
+            background: None,
+        }
+        .spec(),
         Operation::Upscale {
-            input: Default::default(), output: Default::default(),
+            input: Default::default(),
+            output: Default::default(),
             scale: crate::ScaleFactor::new(2).expect("static valid scale"),
-            filter: None, jpeg_quality: None, background: None,
-        }.spec(),
-        Operation::Edit { request: Default::default() }.spec(),
-        Operation::ExportPsd { request: Default::default() }.spec(),
-        Operation::ChromaPlan { request: Default::default() }.spec(),
-        Operation::NormalizeSprite { request: Default::default(), output_dir: Default::default() }.spec(),
-        Operation::CompileSprite { request: Default::default(), output_dir: Default::default() }.spec(),
+            filter: None,
+            jpeg_quality: None,
+            background: None,
+        }
+        .spec(),
+        Operation::Edit {
+            request: Default::default(),
+        }
+        .spec(),
+        Operation::ExportPsd {
+            request: Default::default(),
+        }
+        .spec(),
+        Operation::ChromaPlan {
+            request: Default::default(),
+        }
+        .spec(),
+        Operation::NormalizeSprite {
+            request: Default::default(),
+            output_dir: Default::default(),
+        }
+        .spec(),
+        Operation::CompileSprite {
+            request: Default::default(),
+            output_dir: Default::default(),
+        }
+        .spec(),
         Operation::CompileVector {
-            input: Default::default(), output: Default::default(),
-            preset: crate::VectorPresetSelection::Auto, profile: crate::SvgProfile::Compact,
-            detail: None, minimum_quality: None, maximum_quality_loss: None, maximum_paths: None,
-            policy: None, report: None, diagnostics: None,
-        }.spec(),
+            input: Default::default(),
+            output: Default::default(),
+            preset: crate::VectorPresetSelection::Auto,
+            profile: crate::SvgProfile::Compact,
+            detail: None,
+            minimum_quality: None,
+            maximum_quality_loss: None,
+            maximum_paths: None,
+            policy: None,
+            report: None,
+            diagnostics: None,
+        }
+        .spec(),
         Operation::AnalyzeVector {
-            input: Default::default(), preset: crate::VectorPresetSelection::Auto,
-            profile: crate::SvgProfile::Compact, policy: None, report: None,
-        }.spec(),
-        Operation::ScaffoldMotion { input: Default::default(), output_dir: Default::default() }.spec(),
-        Operation::CompileMotion { request: Default::default(), output_dir: Default::default() }.spec(),
+            input: Default::default(),
+            preset: crate::VectorPresetSelection::Auto,
+            profile: crate::SvgProfile::Compact,
+            policy: None,
+            report: None,
+        }
+        .spec(),
+        Operation::ScaffoldMotion {
+            input: Default::default(),
+            output_dir: Default::default(),
+        }
+        .spec(),
+        Operation::CompileMotion {
+            request: Default::default(),
+            output_dir: Default::default(),
+        }
+        .spec(),
     ];
     specs
         .into_iter()
         .map(|spec| OperationSchema {
             name: spec.name,
             summary: spec.summary,
-            side_effect: format!("{:?}", spec.side_effect).to_ascii_lowercase(),
-            risk: format!("{:?}", spec.risk).to_ascii_lowercase(),
+            side_effect: spec.side_effect,
+            risk: spec.risk,
             timeout_ms: spec.timeout.map(|value| value.as_millis()),
             capabilities: spec.capabilities,
         })
@@ -192,8 +292,8 @@ fn operation_specs() -> Vec<OperationSchema> {
 struct OperationSchema {
     name: &'static str,
     summary: &'static str,
-    side_effect: String,
-    risk: String,
+    side_effect: SideEffectClass,
+    risk: OperationRisk,
     timeout_ms: Option<u128>,
     capabilities: &'static [&'static str],
 }
@@ -225,6 +325,8 @@ struct SchemaPayload {
     asset_adapter: AssetAdapterSchema,
     edit_command: EditCommandSchema,
     psd_export_command: PsdExportCommandSchema,
+    vector_command: VectorCommandSchema,
+    vector_analyze_command: VectorAnalyzeCommandSchema,
     vector_authority: &'static str,
     packing_defaults: PackingDefaultsPayload,
 }
@@ -291,6 +393,46 @@ struct ChromaPlanCommandSchema {
     candidate_palette: &'static [[u8; 3]; 8],
     candidate_count: usize,
     metric: &'static str,
+    output: &'static [&'static str],
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VectorCommandSchema {
+    arguments: &'static [&'static str],
+    options: &'static [&'static str],
+    defaults: VectorGenerationDefaults,
+    publication_order: &'static [&'static str],
+    artifact_order: &'static [&'static str],
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VectorAnalyzeCommandSchema {
+    arguments: &'static [&'static str],
+    options: &'static [&'static str],
+    defaults: VectorAnalysisDefaults,
+    publication_order: &'static [&'static str],
+    artifact_order: &'static [&'static str],
+    publishes_svg: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VectorAnalysisDefaults {
+    preset: &'static str,
+    profile: &'static str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VectorGenerationDefaults {
+    preset: &'static str,
+    profile: &'static str,
+    detail: &'static str,
+    min_quality: Option<f64>,
+    max_quality_loss: Option<f64>,
+    max_paths: Option<usize>,
 }
 
 #[derive(Serialize)]
