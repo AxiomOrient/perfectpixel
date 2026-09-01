@@ -1,6 +1,8 @@
 mod external;
+mod texture;
 
 pub use external::*;
+pub use texture::*;
 
 use serde::{Deserialize, Serialize};
 
