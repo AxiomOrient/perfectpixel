@@ -8,17 +8,6 @@ use super::{
 pub const VERIFICATION_REPORT_SCHEMA: &str = "perfectpixel.verification-report/4";
 const MAX_SRGB_DELTA_E_MILLI: usize = 200_000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum VerificationProfile {
-    LosslessTransform,
-    Resize,
-    VectorRoundTrip,
-    TextureColor,
-    Mask,
-    DocumentComposite,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct VerificationSpec {
@@ -49,9 +38,9 @@ impl VerificationSpec {
                         "verification alpha minimum must not exceed maximum".to_string(),
                     ));
                 }
-                ExactAssertion::ConnectedComponentCount { minimum, maximum, .. }
-                    if minimum > maximum =>
-                {
+                ExactAssertion::ConnectedComponentCount {
+                    minimum, maximum, ..
+                } if minimum > maximum => {
                     return Err(PpError::InvalidRequest(
                         "component-count minimum must not exceed maximum".to_string(),
                     ));
@@ -81,7 +70,9 @@ impl VerificationSpec {
                 ));
             }
             match assertion {
-                RegionAssertion::AlphaBounds { minimum, maximum, .. } if minimum > maximum => {
+                RegionAssertion::AlphaBounds {
+                    minimum, maximum, ..
+                } if minimum > maximum => {
                     return Err(PpError::InvalidRequest(
                         "region alpha minimum must not exceed maximum".to_string(),
                     ));
@@ -99,10 +90,20 @@ impl VerificationSpec {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ExactAssertion {
-    Dimensions { width: u32, height: u32 },
-    PixelSpec { expected: PixelSpec },
-    AlphaBounds { minimum: u8, maximum: u8 },
-    ArtifactSha256 { expected: Sha256Digest },
+    Dimensions {
+        width: u32,
+        height: u32,
+    },
+    PixelSpec {
+        expected: PixelSpec,
+    },
+    AlphaBounds {
+        minimum: u8,
+        maximum: u8,
+    },
+    ArtifactSha256 {
+        expected: Sha256Digest,
+    },
     ConnectedComponentCount {
         threshold: u8,
         minimum: u32,
@@ -135,7 +136,9 @@ pub enum PerceptualAssertion {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RegionAssertion {
-    ExactRgba { rect: FrameRect },
+    ExactRgba {
+        rect: FrameRect,
+    },
     AlphaBounds {
         rect: FrameRect,
         minimum: u8,
@@ -179,12 +182,26 @@ pub struct ExactCheck {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExactEvidence {
-    Dimensions { width: u32, height: u32 },
-    PixelSpec { actual: PixelSpec },
-    AlphaBounds { minimum: u8, maximum: u8 },
-    ArtifactSha256 { actual: Option<Sha256Digest> },
-    ConnectedComponentCount { actual: u32 },
-    ContentBounds { actual: FrameRect },
+    Dimensions {
+        width: u32,
+        height: u32,
+    },
+    PixelSpec {
+        actual: PixelSpec,
+    },
+    AlphaBounds {
+        minimum: u8,
+        maximum: u8,
+    },
+    ArtifactSha256 {
+        actual: Option<Sha256Digest>,
+    },
+    ConnectedComponentCount {
+        actual: u32,
+    },
+    ContentBounds {
+        actual: FrameRect,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -314,7 +331,10 @@ pub fn verify_raster(
                     ExactEvidence::ConnectedComponentCount { actual: count },
                 )
             }
-            ExactAssertion::ContentBounds { threshold, expected } => {
+            ExactAssertion::ContentBounds {
+                threshold,
+                expected,
+            } => {
                 let actual = mask.bounding_box(*threshold);
                 (
                     actual == *expected,
@@ -410,7 +430,9 @@ fn evaluate_region(
         });
     }
     match assertion {
-        RegionAssertion::AlphaBounds { minimum, maximum, .. } => {
+        RegionAssertion::AlphaBounds {
+            minimum, maximum, ..
+        } => {
             let (actual_minimum, actual_maximum) = alpha_bounds(actual, Some(rect))?;
             Ok(RegionCheck {
                 assertion: assertion.clone(),
@@ -552,7 +574,9 @@ fn delta_e_metrics(
                     "DeltaE2000 produced a non-finite metric".to_string(),
                 ));
             }
-            let milli = (difference * 1000.0).round().clamp(0.0, u32::MAX as f64) as u32;
+            let milli = (difference * 1000.0)
+                .round()
+                .clamp(0.0, u32::MAX as f64) as u32;
             histogram[(milli as usize).min(MAX_SRGB_DELTA_E_MILLI)] += 1;
             sum = sum.saturating_add(u64::from(milli));
             max = max.max(milli);
@@ -661,10 +685,14 @@ mod tests {
     #[test]
     fn exact_verification_reports_each_invariant() -> crate::PpResult<()> {
         let raster = Raster::new(2, 1, vec![255, 0, 0, 255, 0, 0, 0, 0])?;
-        let pixel_spec = PixelSpec::new(PixelFormat::Rgba8, AlphaMode::Straight, ColorSpec::Srgb);
+        let pixel_spec =
+            PixelSpec::new(PixelFormat::Rgba8, AlphaMode::Straight, ColorSpec::Srgb);
         let artifact = ArtifactRef::from_bytes("image/png", b"encoded")?;
         let spec = exact_spec(vec![
-            ExactAssertion::Dimensions { width: 2, height: 1 },
+            ExactAssertion::Dimensions {
+                width: 2,
+                height: 1,
+            },
             ExactAssertion::PixelSpec {
                 expected: pixel_spec.clone(),
             },
@@ -685,7 +713,8 @@ mod tests {
     #[test]
     fn verification_rejects_vacuous_success() -> crate::PpResult<()> {
         let raster = Raster::blank(1, 1)?;
-        let pixel_spec = PixelSpec::new(PixelFormat::Rgba8, AlphaMode::Straight, ColorSpec::Unknown);
+        let pixel_spec =
+            PixelSpec::new(PixelFormat::Rgba8, AlphaMode::Straight, ColorSpec::Unknown);
         assert!(verify_raster(
             &VerificationSpec::default(),
             &raster,
@@ -728,7 +757,8 @@ mod tests {
     fn delta_e_requires_alpha_support_to_match() -> crate::PpResult<()> {
         let actual = Raster::new(1, 1, vec![255, 0, 0, 0])?;
         let reference = Raster::new(1, 1, vec![255, 0, 0, 255])?;
-        let pixel_spec = PixelSpec::new(PixelFormat::Rgba8, AlphaMode::Straight, ColorSpec::Srgb);
+        let pixel_spec =
+            PixelSpec::new(PixelFormat::Rgba8, AlphaMode::Straight, ColorSpec::Srgb);
         let spec = VerificationSpec {
             exact: Vec::new(),
             perceptual: vec![PerceptualAssertion::DeltaE2000 {
@@ -749,7 +779,8 @@ mod tests {
     fn region_exact_and_alpha_are_independent_gates() -> crate::PpResult<()> {
         let reference = Raster::new(2, 1, vec![1, 2, 3, 255, 4, 5, 6, 0])?;
         let actual = Raster::new(2, 1, vec![1, 2, 3, 255, 9, 9, 9, 0])?;
-        let pixel_spec = PixelSpec::new(PixelFormat::Rgba8, AlphaMode::Straight, ColorSpec::Srgb);
+        let pixel_spec =
+            PixelSpec::new(PixelFormat::Rgba8, AlphaMode::Straight, ColorSpec::Srgb);
         let spec = VerificationSpec {
             exact: Vec::new(),
             perceptual: Vec::new(),
