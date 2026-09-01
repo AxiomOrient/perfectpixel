@@ -68,21 +68,23 @@ core
 
 `OperationRegistry` is the only operation metadata authority. Every operation name is unique and binds summary, risk, side-effect class, capabilities, and optional timeout.
 
-The CLI parses syntax directly into `Operation`. MCP retains typed DTOs for its existing protocol surface; `ApplicationRequest` converts directly into the same `Operation` and never reconstructs argv.
+The CLI parses syntax directly into `Operation`. MCP keeps only its protocol-local typed `*Params` DTOs; each tool resolves root-bounded paths and canonical scalar values directly into the same `Operation`. There is no intermediate `ApplicationRequest`, argv reconstruction, or CLI-parser re-entry.
 
 ```text
-CLI syntax -> Operation ─┐
-                         ├-> application dispatch
-MCP typed DTO -> Operation┘
+CLI syntax ---------> Operation ─┐
+                                 ├-> application dispatch
+MCP typed *Params --> Operation ─┘
 ```
 
-CLI and MCP inventory parity means semantic parity for operations exposed through both transports, not necessarily identical command counts. New compiler CLI operations do not silently expand the fixed MCP compatibility contract.
+CLI and MCP inventory parity means semantic parity for operations exposed through both transports, not identical command counts. Compiler-only CLI operations do not silently expand the fixed MCP tool contract.
+
+`OperationRegistry` also owns external-operation timeout metadata. Application dispatch passes that value into the Effect request; Texture/Vision handlers do not maintain independent timeout constants.
 
 ## Authoritative owners
 
 | Responsibility | Owner |
 | --- | --- |
-| operation identity / metadata | `OperationRegistry` |
+| operation identity / metadata / timeout | `OperationRegistry` |
 | artifact identity | `ArtifactRef` digest |
 | raster pixel/color/alpha semantics | core pixel/color/alpha |
 | mask cleanup | core alpha |
@@ -158,7 +160,7 @@ The remaining pathname check-to-exec window is a platform residual of Darwin/`st
 strict texture request
 -> request/input/output preconditions
 -> exact input ArtifactRef verification
--> explicit PixelSpec/color normalization policy
+-> explicit PixelSpec/color policy
 -> canonical PNG carrier
 -> pinned KTX encode Effect
 -> current EffectIdentity check
@@ -171,6 +173,8 @@ strict texture request
 ```
 
 The external KTX executable owns encoding bytes only. PerfectPixel owns texture semantics and acceptance. Color-sRGB verification uses CIEDE2000; linear/normal/mask verification uses explicit channel-error policy. Normal maps are not judged with an unrelated sRGB metric.
+
+ICC-tagged texture sources retain exact profile provenance but fail with explicit `Unsupported` because this release has no ICC transform engine. No profile is silently interpreted as sRGB.
 
 ## Apple Vision flow
 
@@ -196,7 +200,7 @@ The helper receipt records provider, adapter version, OS version, request type, 
 
 ## Document flow
 
-Compatibility `psd` and canonical layered `document-psd` are separate contracts.
+The single-raster `psd` export and layered `document-psd` compiler are independent public contracts with different semantics.
 
 The layered path is:
 
@@ -213,6 +217,8 @@ strict request
 ```
 
 The merged composite is computed before serialization and remains PerfectPixel authority. The PSD writer is never allowed to become the renderer-of-record.
+
+ICC-tagged DocumentIR raster bindings retain provenance but fail explicitly until a real color transform engine is introduced behind a separately verified boundary.
 
 ## Vector flow
 
@@ -235,13 +241,15 @@ External VTracer is deliberately absent from this release. Adding it before the 
 
 Codec decode preserves embedded ICC bytes and binds them to `ColorSpec::Icc { digest }`. No-profile input remains `ColorSpec::Unknown`.
 
-The current minimal release does not embed an ICC transform engine. A required ICC transform returns explicit `Unsupported`; there is no silent sRGB fallback. This keeps color correctness strict while avoiding a dependency whose behavior would otherwise become a hidden semantic authority.
+The current minimal release does not expose an ICC transform API. Operations that require conversion from an embedded ICC profile return explicit `Unsupported`; there is no silent sRGB fallback. A future color engine must be introduced as one explicit transform authority with corpus-backed verification rather than as a hidden codec behavior.
 
 ## MCP boundary
 
-MCP is local stdio with one configured fixed root. Root/path validation, one-active-operation admission, typed request parsing, and MCP envelope rendering belong to this adapter only.
+MCP is local stdio with one configured fixed root. Root/path validation, one-active-operation admission, typed protocol `*Params`, and MCP envelope rendering belong to this adapter only.
 
-Synchronous product work runs in `spawn_blocking`. Cancelling the MCP future does not force-stop an already-running in-process publication worker, and its permit is not released early. This existing compatibility behavior is separate from external process Effect cancellation; conflating them would make publication interruptible at an unsafe point.
+The protocol DTO maps directly to `Operation`. Root/path rejection remains a transport error; semantic scalar validation is rendered through the same application failure taxonomy used by the CLI.
+
+Synchronous product work runs in `spawn_blocking`. Cancelling the MCP future does not force-stop an already-running in-process publication worker, and its permit is not released early. This public behavior is separate from external process Effect cancellation; conflating them would make in-process publication interruptible at an unsafe point.
 
 ## Publication boundary
 
