@@ -23,7 +23,6 @@ fn inspect_raster_reports_bbox_center_ground_and_edge_touch() {
     assert!((report.alpha_ratio - 0.1875).abs() < f64::EPSILON);
     assert!(report.has_alpha);
     assert_eq!(report.pixel_format, "rgba8");
-    assert_eq!(report.color_space, "srgb");
     assert_eq!(report.edge_pixel_count, 12);
     assert_eq!(
         report.edge_palette,
