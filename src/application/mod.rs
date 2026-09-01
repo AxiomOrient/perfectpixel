@@ -43,7 +43,7 @@ USAGE
 pub fn execute(request: ApplicationRequest) -> ApplicationOutput {
     match Operation::try_from(request) {
         Ok(operation) => execute_operation(operation),
-        Err(error) => render_result(Err(error), "application"),
+        Err(error) => render_result(Err(error), "application.request", "application"),
     }
 }
 
@@ -52,14 +52,15 @@ pub fn execute_cli(args: Vec<String>) -> ApplicationOutput {
     match cli::parse(&args) {
         Ok(CliInput::Help) => ApplicationOutput::from_text(HELP.to_string(), 0),
         Ok(CliInput::Operation(operation)) => execute_operation(operation),
-        Err(error) => render_result(Err(error), "cli"),
+        Err(error) => render_result(Err(error), "cli.parse", "cli"),
     }
 }
 
 /// Single application dispatcher shared by every transport.
 pub(crate) fn execute_operation(operation: Operation) -> ApplicationOutput {
-    let phase = operation_phase(operation.spec().name);
-    render_result(dispatch(operation), phase)
+    let spec = operation.spec();
+    let phase = operation_phase(spec.name);
+    render_result(dispatch(operation), spec.name, phase)
 }
 
 fn dispatch(operation: Operation) -> PpResult<String> {
@@ -177,5 +178,14 @@ mod tests {
         let output = execute(ApplicationRequest::Schema);
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("deterministic-asset-compiler"));
+    }
+
+    #[test]
+    fn cli_parse_failure_has_structured_operation_failure() {
+        let output = execute_cli(args(&["convert"]));
+        assert_ne!(output.exit_code, 0);
+        let value: serde_json::Value = serde_json::from_str(output.stdout.trim()).expect("json");
+        assert_eq!(value["failure"]["operation"], "cli.parse");
+        assert_eq!(value["failure"]["context"][0]["key"], "phase");
     }
 }
