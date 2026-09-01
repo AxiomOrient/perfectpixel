@@ -3,8 +3,8 @@ use std::{num::NonZeroU32, path::PathBuf};
 use serde::Serialize;
 
 use crate::{
-    inspect_raster, resize_raster, AtomicFileWriter, DecodeLimits, ImageCodec, JpegQuality, PpError,
-    PpResult, ResampleFilter, ScaleFactor,
+    inspect_raster, resize_raster, AtomicFileWriter, DecodeLimits, FilePrecondition, ImageCodec,
+    JpegQuality, PpError, PpResult, ResampleFilter, ScaleFactor,
 };
 
 use super::super::{
@@ -101,6 +101,7 @@ struct AssetOperation {
     command: &'static str,
     input: PathBuf,
     output: PathBuf,
+    output_precondition: FilePrecondition,
     format: AssetOutputFormat,
     filter: ResampleFilter,
     jpeg_quality: u8,
@@ -134,12 +135,16 @@ impl AssetOperation {
                 "--background is only valid for JPEG output".to_string(),
             ));
         }
+        // Capture destination authority before input decode/resize/encode work. A caller that
+        // races this operation can never be silently overwritten at the final rename.
+        let output_precondition = FilePrecondition::capture(&output)?;
         let bytes = read_bytes_limited(&input, MAX_RASTER_READ_BYTES)?;
         let source = ImageCodec::decode_rgba_bytes(&input, &bytes, DecodeLimits::default())?;
         Ok(Self {
             command,
             input,
             output,
+            output_precondition,
             format,
             filter,
             jpeg_quality: jpeg_quality.map(JpegQuality::get).unwrap_or(DEFAULT_JPEG_QUALITY),
@@ -169,7 +174,7 @@ impl AssetOperation {
         )?;
         let output_sha256 = crate::sha256_hex(&bytes);
         let output_byte_count = byte_count(&bytes)?;
-        AtomicFileWriter::write_bytes(&self.output, &bytes)?;
+        AtomicFileWriter::write_bytes_checked(&self.output, &self.output_precondition, &bytes)?;
         serialize_json(
             &AssetTransformSummary {
                 schema: ASSET_TRANSFORM_SCHEMA,
