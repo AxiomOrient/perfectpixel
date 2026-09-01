@@ -84,9 +84,10 @@ pub use io::{
 };
 #[cfg(unix)]
 pub use operation::{
-    parse_unit_score, parse_vector_detail, parse_vector_preset, parse_vector_profile, FailureContext,
-    JpegQuality, Operation, OperationErrorCode, OperationFailure, OperationInputError, OperationRisk,
-    OperationSpec, ScaleFactor, SideEffectClass,
+    parse_resample_filter, parse_unit_score, parse_vector_detail, parse_vector_preset,
+    parse_vector_profile, FailureContext, JpegQuality, Operation, OperationErrorCode,
+    OperationFailure, OperationInputError, OperationRisk, OperationSpec, ScaleFactor,
+    SideEffectClass,
 };
 #[cfg(unix)]
 pub use vector::{
