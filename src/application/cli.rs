@@ -1,8 +1,15 @@
-use std::path::PathBuf;
+use std::{
+    num::{NonZeroU32, NonZeroUsize},
+    path::PathBuf,
+};
 
-use crate::{Operation, PpError, PpResult};
+use crate::{
+    parse_resample_filter, parse_unit_score, parse_vector_detail, parse_vector_preset,
+    parse_vector_profile, JpegQuality, Operation, PpError, PpResult, ScaleFactor, SvgProfile,
+    VectorPresetSelection,
+};
 
-use super::ApplicationRequest;
+use super::asset_codec::parse_background;
 
 pub(super) enum CliInput {
     Help,
@@ -20,7 +27,7 @@ pub(super) fn parse(args: &[String]) -> PpResult<CliInput> {
         }
         "schema" => {
             reject_extra(&args[1..], "schema")?;
-            operation(ApplicationRequest::Schema)
+            Ok(CliInput::Operation(Operation::Schema))
         }
         "inspect" => {
             if args.len() != 2 || args[1].starts_with("--") {
@@ -28,9 +35,9 @@ pub(super) fn parse(args: &[String]) -> PpResult<CliInput> {
                     "inspect requires exactly one <input>".to_string(),
                 ));
             }
-            operation(ApplicationRequest::Inspect {
+            Ok(CliInput::Operation(Operation::Inspect {
                 input: PathBuf::from(&args[1]),
-            })
+            }))
         }
         "convert" => parse_convert(&args[1..]),
         "upscale" => parse_upscale(&args[1..]),
@@ -56,51 +63,61 @@ pub(super) fn parse(args: &[String]) -> PpResult<CliInput> {
 
 fn parse_convert(args: &[String]) -> PpResult<CliInput> {
     let input = positional_input(args, "convert")?;
-    let options = options(
+    let values = options(
         &args[1..],
         &["--out", "--width", "--height", "--filter", "--jpeg-quality", "--background"],
     )?;
-    operation(ApplicationRequest::Convert {
+    Ok(CliInput::Operation(Operation::Convert {
         input,
-        output: required_path(&options, "--out")?,
-        width: optional_parse(&options, "--width", "--width must be a positive integer")?,
-        height: optional_parse(&options, "--height", "--height must be a positive integer")?,
-        filter: optional_string(&options, "--filter"),
-        jpeg_quality: optional_parse(&options, "--jpeg-quality", "--jpeg-quality must be from 1 through 100")?,
-        background: optional_string(&options, "--background"),
-    })
+        output: required_path(&values, "--out")?,
+        width: optional_positive_u32(&values, "--width")?,
+        height: optional_positive_u32(&values, "--height")?,
+        filter: value(&values, "--filter")
+            .map(parse_resample_filter)
+            .transpose()
+            .map_err(operation_input_error)?,
+        jpeg_quality: optional_jpeg_quality(&values)?,
+        background: value(&values, "--background")
+            .map(parse_background)
+            .transpose()?,
+    }))
 }
 
 fn parse_upscale(args: &[String]) -> PpResult<CliInput> {
     let input = positional_input(args, "upscale")?;
-    let options = options(
+    let values = options(
         &args[1..],
         &["--out", "--scale", "--filter", "--jpeg-quality", "--background"],
     )?;
-    let scale = required_parse(
-        &options,
+    let raw_scale = required_parse::<u32>(
+        &values,
         "--scale",
         "--scale must be an integer greater than or equal to 2",
     )?;
-    operation(ApplicationRequest::Upscale {
+    Ok(CliInput::Operation(Operation::Upscale {
         input,
-        output: required_path(&options, "--out")?,
-        scale,
-        filter: optional_string(&options, "--filter"),
-        jpeg_quality: optional_parse(&options, "--jpeg-quality", "--jpeg-quality must be from 1 through 100")?,
-        background: optional_string(&options, "--background"),
-    })
+        output: required_path(&values, "--out")?,
+        scale: ScaleFactor::new(raw_scale).map_err(operation_input_error)?,
+        filter: value(&values, "--filter")
+            .map(parse_resample_filter)
+            .transpose()
+            .map_err(operation_input_error)?,
+        jpeg_quality: optional_jpeg_quality(&values)?,
+        background: value(&values, "--background")
+            .map(parse_background)
+            .transpose()?,
+    }))
 }
 
 fn parse_request_directory(args: &[String], normalize: bool) -> PpResult<CliInput> {
     let values = options(args, &["--request", "--out-dir"])?;
     let request = required_path(&values, "--request")?;
     let output_dir = required_path(&values, "--out-dir")?;
-    if normalize {
-        operation(ApplicationRequest::Normalize { request, output_dir })
+    Ok(CliInput::Operation(if normalize {
+        Operation::NormalizeSprite { request, output_dir }
     } else {
-        operation(ApplicationRequest::Bundle { request, output_dir })
-    }
+        Operation::CompileSprite { request, output_dir }
+    }))
 }
 
 fn parse_vector(args: &[String]) -> PpResult<CliInput> {
@@ -112,82 +129,97 @@ fn parse_vector(args: &[String]) -> PpResult<CliInput> {
             "--max-quality-loss", "--max-paths", "--policy", "--report", "--diagnostics",
         ],
     )?;
-    let detail = match value(&values, "--detail") {
-        None | Some("auto") => None,
-        Some(raw) => Some(raw.parse::<u8>().map_err(|_| {
-            PpError::InvalidOption("--detail must be auto or an integer from 1 through 5".to_string())
-        })?),
-    };
-    operation(ApplicationRequest::Vector {
+
+    let preset = value(&values, "--preset")
+        .map(parse_vector_preset)
+        .transpose()
+        .map_err(operation_input_error)?
+        .unwrap_or(VectorPresetSelection::Auto);
+    let profile = value(&values, "--profile")
+        .map(parse_vector_profile)
+        .transpose()
+        .map_err(operation_input_error)?
+        .unwrap_or(SvgProfile::Compact);
+    let detail = value(&values, "--detail")
+        .map(parse_vector_detail)
+        .transpose()
+        .map_err(operation_input_error)?
+        .flatten();
+    let minimum_quality = value(&values, "--min-quality")
+        .map(parse_unit_score)
+        .transpose()
+        .map_err(operation_input_error)?;
+    let maximum_quality_loss = value(&values, "--max-quality-loss")
+        .map(parse_unit_score)
+        .transpose()
+        .map_err(operation_input_error)?;
+    let maximum_paths = optional_positive_usize(&values, "--max-paths")?;
+
+    Ok(CliInput::Operation(Operation::CompileVector {
         input,
         output: required_path(&values, "--out")?,
-        preset: optional_string(&values, "--preset"),
-        profile: optional_string(&values, "--profile"),
+        preset,
+        profile,
         detail,
-        min_quality: optional_parse(
-            &values,
-            "--min-quality",
-            "--min-quality and --max-quality-loss must be finite numbers from 0 through 1",
-        )?,
-        max_quality_loss: optional_parse(
-            &values,
-            "--max-quality-loss",
-            "--min-quality and --max-quality-loss must be finite numbers from 0 through 1",
-        )?,
-        max_paths: optional_parse(&values, "--max-paths", "--max-paths must be a positive integer")?,
+        minimum_quality,
+        maximum_quality_loss,
+        maximum_paths,
         policy: optional_path(&values, "--policy"),
         report: optional_path(&values, "--report"),
         diagnostics: optional_path(&values, "--diagnostics"),
-    })
+    }))
 }
 
 fn parse_vector_analyze(args: &[String]) -> PpResult<CliInput> {
     let input = positional_input(args, "vector-analyze")?;
     let values = options(&args[1..], &["--preset", "--profile", "--policy", "--report"])?;
-    operation(ApplicationRequest::VectorAnalyze {
+    let preset = value(&values, "--preset")
+        .map(parse_vector_preset)
+        .transpose()
+        .map_err(operation_input_error)?
+        .unwrap_or(VectorPresetSelection::Auto);
+    let profile = value(&values, "--profile")
+        .map(parse_vector_profile)
+        .transpose()
+        .map_err(operation_input_error)?
+        .unwrap_or(SvgProfile::Compact);
+    Ok(CliInput::Operation(Operation::AnalyzeVector {
         input,
-        preset: optional_string(&values, "--preset"),
-        profile: optional_string(&values, "--profile"),
+        preset,
+        profile,
         policy: optional_path(&values, "--policy"),
         report: optional_path(&values, "--report"),
-    })
+    }))
 }
 
 fn parse_motion_scaffold(args: &[String]) -> PpResult<CliInput> {
     let input = positional_input(args, "motion-scaffold")?;
     let values = options(&args[1..], &["--out-dir"])?;
-    operation(ApplicationRequest::MotionScaffold {
+    Ok(CliInput::Operation(Operation::ScaffoldMotion {
         input,
         output_dir: required_path(&values, "--out-dir")?,
-    })
+    }))
 }
 
 fn parse_motion_build(args: &[String]) -> PpResult<CliInput> {
     let values = options(args, &["--request", "--out-dir"])?;
-    operation(ApplicationRequest::MotionBuild {
+    Ok(CliInput::Operation(Operation::CompileMotion {
         request: required_path(&values, "--request")?,
         output_dir: required_path(&values, "--out-dir")?,
-    })
+    }))
 }
 
-fn one_request(
-    args: &[String],
-    make: impl FnOnce(PathBuf) -> Operation,
-) -> PpResult<CliInput> {
+fn one_request(args: &[String], make: impl FnOnce(PathBuf) -> Operation) -> PpResult<CliInput> {
     let values = options(args, &["--request"])?;
     Ok(CliInput::Operation(make(required_path(&values, "--request")?)))
 }
 
 fn positional_input(args: &[String], command: &str) -> PpResult<PathBuf> {
     let Some(input) = args.first() else {
-        return Err(PpError::InvalidOption(format!(
-            "{command} requires <input>"
-        )));
+        return Err(PpError::InvalidOption(format!("{command} requires <input>")));
     };
     if input.starts_with("--") {
-        return Err(PpError::InvalidOption(format!(
-            "{command} requires <input>"
-        )));
+        return Err(PpError::InvalidOption(format!("{command} requires <input>")));
     }
     Ok(PathBuf::from(input))
 }
@@ -249,10 +281,6 @@ fn optional_path(values: &[OptionValue], key: &str) -> Option<PathBuf> {
     value(values, key).map(PathBuf::from)
 }
 
-fn optional_string(values: &[OptionValue], key: &str) -> Option<String> {
-    value(values, key).map(str::to_string)
-}
-
 fn optional_parse<T: std::str::FromStr>(
     values: &[OptionValue],
     key: &str,
@@ -272,6 +300,42 @@ fn required_parse<T: std::str::FromStr>(
         .ok_or_else(|| PpError::InvalidOption(format!("{key} is required")))
 }
 
+fn optional_positive_u32(values: &[OptionValue], key: &str) -> PpResult<Option<NonZeroU32>> {
+    optional_parse::<u32>(values, key, &format!("{key} must be a positive integer"))?
+        .map(|raw| {
+            NonZeroU32::new(raw)
+                .ok_or_else(|| PpError::InvalidOption(format!("{key} must be a positive integer")))
+        })
+        .transpose()
+}
+
+fn optional_positive_usize(
+    values: &[OptionValue],
+    key: &str,
+) -> PpResult<Option<NonZeroUsize>> {
+    optional_parse::<usize>(values, key, &format!("{key} must be a positive integer"))?
+        .map(|raw| {
+            NonZeroUsize::new(raw)
+                .ok_or_else(|| PpError::InvalidOption(format!("{key} must be a positive integer")))
+        })
+        .transpose()
+}
+
+fn optional_jpeg_quality(values: &[OptionValue]) -> PpResult<Option<JpegQuality>> {
+    optional_parse::<u8>(
+        values,
+        "--jpeg-quality",
+        "--jpeg-quality must be from 1 through 100",
+    )?
+    .map(JpegQuality::new)
+    .transpose()
+    .map_err(operation_input_error)
+}
+
+fn operation_input_error(error: impl std::fmt::Display) -> PpError {
+    PpError::InvalidOption(error.to_string())
+}
+
 fn reject_extra(args: &[String], command: &str) -> PpResult<()> {
     if args.is_empty() {
         Ok(())
@@ -280,10 +344,6 @@ fn reject_extra(args: &[String], command: &str) -> PpResult<()> {
             "{command} does not accept extra arguments"
         )))
     }
-}
-
-fn operation(request: ApplicationRequest) -> PpResult<CliInput> {
-    Ok(CliInput::Operation(Operation::try_from(request)?))
 }
 
 #[cfg(test)]
@@ -303,11 +363,24 @@ mod tests {
     }
 
     #[test]
-    fn semantic_scale_validation_comes_from_operation_conversion() {
+    fn semantic_scale_validation_uses_canonical_newtype() {
         assert!(parse(&args(&[
             "upscale", "a.png", "--out", "b.png", "--scale", "1"
         ]))
         .is_err());
+    }
+
+    #[test]
+    fn cli_parses_directly_to_canonical_operation() -> PpResult<()> {
+        let parsed = parse(&args(&[
+            "convert", "a.png", "--out", "b.png", "--width", "64", "--filter", "nearest"
+        ]))?;
+        let CliInput::Operation(Operation::Convert { width, filter, .. }) = parsed else {
+            panic!("expected convert operation");
+        };
+        assert_eq!(width.map(NonZeroU32::get), Some(64));
+        assert_eq!(filter, Some(crate::ResampleFilter::Nearest));
+        Ok(())
     }
 
     #[test]
