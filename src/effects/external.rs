@@ -46,8 +46,6 @@ impl KtxEncoding {
     fn cli_value(self) -> &'static str {
         match self {
             Self::BasisLz => "basis-lz",
-            // `uastc` remains accepted by KTX-Software but is a deprecated alias.
-            // Receipts digest arguments, so use the canonical stable spelling.
             Self::Uastc => "uastc-ldr-4x4",
         }
     }
@@ -104,11 +102,12 @@ fn ktx_arguments(
         } else {
             "R8G8B8A8_UNORM".to_string()
         },
-        // PerfectPixel already owns source color semantics. The generated PNG is merely an
-        // external-Effect carrier, so tell KTX exactly how to interpret it rather than allowing
-        // the tool to infer/convert transfer characteristics from incidental PNG metadata.
         "--assign-tf".to_string(),
-        if srgb { "srgb".to_string() } else { "linear".to_string() },
+        if srgb {
+            "srgb".to_string()
+        } else {
+            "linear".to_string()
+        },
         "--encode".to_string(),
         encoding.cli_value().to_string(),
         "--threads".to_string(),
@@ -234,56 +233,6 @@ fn vtracer_arguments(request: &VTracerEffectRequest) -> Vec<String> {
         args.extend(["--optimize".to_string(), value.to_string()]);
     }
     args
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AppleVisionRevision {
-    Revision1,
-}
-
-impl AppleVisionRevision {
-    fn cli_value(self) -> &'static str {
-        match self {
-            Self::Revision1 => "1",
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct AppleVisionForegroundMaskRequest {
-    pub identity: EffectIdentity,
-    pub executable: PinnedExecutable,
-    pub input: PathBuf,
-    pub staging_output: PathBuf,
-    pub revision: AppleVisionRevision,
-    pub timeout: Duration,
-}
-
-pub fn run_apple_vision_foreground_mask_effect(
-    request: &AppleVisionForegroundMaskRequest,
-    cancellation: &CancellationFlag,
-) -> EffectResult<ExternalArtifactCandidate> {
-    let args = vec![
-        "foreground-mask".to_string(),
-        "--input".to_string(),
-        request.input.to_string_lossy().into_owned(),
-        "--output".to_string(),
-        request.staging_output.to_string_lossy().into_owned(),
-        "--revision".to_string(),
-        request.revision.cli_value().to_string(),
-    ];
-    execute_candidate_effect(
-        &request.identity,
-        "mask.apple_vision_foreground",
-        "perfectpixel-vision-helper",
-        &request.executable,
-        &request.input,
-        &request.staging_output,
-        args,
-        request.timeout,
-        "image/png",
-        cancellation,
-    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -458,9 +407,6 @@ fn validate_effect_paths(input: &Path, staging_output: &Path) -> PpResult<()> {
         message: error.to_string(),
     })?;
 
-    // Fail closed for any existing entry. The external tool itself is a pathname
-    // Effect, so PerfectPixel never treats its output as trusted; the candidate is
-    // reopened through the capability boundary and verified before publication.
     match crate::io::capability::open_read(staging_output) {
         Ok(_) => {
             return Err(PpError::InvalidRequest(
@@ -588,7 +534,9 @@ mod tests {
             false,
         );
         assert!(args.windows(2).any(|pair| pair == ["--assign-tf", "linear"]));
-        assert!(args.windows(2).any(|pair| pair == ["--format", "R8G8B8A8_UNORM"]));
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--format", "R8G8B8A8_UNORM"]));
     }
 
     #[test]
