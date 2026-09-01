@@ -1,8 +1,11 @@
-use std::{num::{NonZeroU32, NonZeroUsize}, path::PathBuf};
+use std::{
+    num::{NonZeroU32, NonZeroUsize},
+    path::PathBuf,
+};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ResampleFilter, SvgProfile, UnitScore, VectorDetail, VectorPolicy, VectorPresetSelection};
+use crate::{ResampleFilter, SvgProfile, UnitScore, VectorDetail, VectorPresetSelection};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -20,7 +23,6 @@ pub struct OperationSpec {
     pub side_effect: SideEffectClass,
 }
 
-/// Validated JPEG quality. Invalid values cannot enter canonical operation state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JpegQuality(u8);
 
@@ -33,10 +35,11 @@ impl JpegQuality {
         }
     }
 
-    pub fn get(self) -> u8 { self.0 }
+    pub fn get(self) -> u8 {
+        self.0
+    }
 }
 
-/// Validated integer upscale factor. Factor 1 is convert/identity, not an upscale operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScaleFactor(NonZeroU32);
 
@@ -48,7 +51,9 @@ impl ScaleFactor {
         Ok(Self(NonZeroU32::new(value).expect("value >= 2")))
     }
 
-    pub fn get(self) -> u32 { self.0.get() }
+    pub fn get(self) -> u32 {
+        self.0.get()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,8 +62,15 @@ pub struct OperationInputError {
 }
 
 impl OperationInputError {
-    pub fn new(message: impl Into<String>) -> Self { Self { message: message.into() } }
-    pub fn message(&self) -> &str { &self.message }
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
 }
 
 impl std::fmt::Display for OperationInputError {
@@ -69,9 +81,8 @@ impl std::fmt::Display for OperationInputError {
 
 impl std::error::Error for OperationInputError {}
 
-/// The single semantic command authority shared by CLI and MCP. Transport-specific validation
-/// resolves paths and scalar syntax before constructing this enum. Product handlers receive no
-/// argv strings and do not know which transport initiated the operation.
+/// Single semantic command authority shared by transports. Paths identify requested I/O but no
+/// file is read while constructing this state. Request/policy reads belong to application Effects.
 pub enum Operation {
     Schema,
     Inspect {
@@ -120,7 +131,7 @@ pub enum Operation {
         minimum_quality: Option<UnitScore>,
         maximum_quality_loss: Option<UnitScore>,
         maximum_paths: Option<NonZeroUsize>,
-        policy: VectorPolicy,
+        policy: Option<PathBuf>,
         report: Option<PathBuf>,
         diagnostics: Option<PathBuf>,
     },
@@ -128,7 +139,7 @@ pub enum Operation {
         input: PathBuf,
         preset: VectorPresetSelection,
         profile: SvgProfile,
-        policy: VectorPolicy,
+        policy: Option<PathBuf>,
         report: Option<PathBuf>,
     },
     ScaffoldMotion {
@@ -161,8 +172,16 @@ impl Operation {
     }
 }
 
-const fn spec(name: &'static str, summary: &'static str, side_effect: SideEffectClass) -> OperationSpec {
-    OperationSpec { name, summary, side_effect }
+const fn spec(
+    name: &'static str,
+    summary: &'static str,
+    side_effect: SideEffectClass,
+) -> OperationSpec {
+    OperationSpec {
+        name,
+        summary,
+        side_effect,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -214,7 +233,9 @@ mod tests {
 
     #[test]
     fn operation_name_and_side_effect_have_one_owner() {
-        let operation = Operation::Inspect { input: "a.png".into() };
+        let operation = Operation::Inspect {
+            input: "a.png".into(),
+        };
         assert_eq!(operation.spec().name, "image.inspect");
         assert_eq!(operation.spec().side_effect, SideEffectClass::Read);
     }
