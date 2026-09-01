@@ -70,8 +70,8 @@ pub use io::{
 };
 #[cfg(unix)]
 pub use io::{
-    AtomicDirectoryEntry, AtomicDirectoryWriter, AtomicFileWriter, DecodeLimits, ImageCodec,
-    PngEncoder,
+    AtomicDirectoryEntry, AtomicDirectoryWriter, AtomicFileWriter, DecodeLimits, DecodedRaster,
+    ImageCodec, PngEncoder,
 };
 #[cfg(unix)]
 pub use vector::{
