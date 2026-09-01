@@ -66,14 +66,16 @@ fn exact_verification_is_machine_readable_and_fails_closed() -> Result<(), Box<d
                 expected: expected_digest,
             },
         ],
+        perceptual: Vec::new(),
     };
 
     let report = verify_raster_exact(&spec, &raster, &pixel_spec, None)?;
     assert!(!report.ok);
-    assert_eq!(report.checks.len(), 3);
-    assert!(report.checks[0].passed);
-    assert!(report.checks[1].passed);
-    assert!(!report.checks[2].passed);
+    assert_eq!(report.exact.len(), 3);
+    assert!(report.exact[0].passed);
+    assert!(report.exact[1].passed);
+    assert!(!report.exact[2].passed);
+    assert!(report.perceptual.is_empty());
     assert!(serde_json::to_value(report)?.is_object());
     Ok(())
 }
