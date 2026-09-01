@@ -114,7 +114,8 @@ fn operation_failure(
 
 fn semantic_operation(error: &PpError) -> Option<&str> {
     match error {
-        PpError::NotFound { operation, .. }
+        PpError::Unsupported { operation, .. }
+        | PpError::NotFound { operation, .. }
         | PpError::Conflict { operation, .. }
         | PpError::PreconditionFailed { operation, .. }
         | PpError::ResourceLimit { operation, .. }
@@ -133,17 +134,21 @@ fn operation_error_code(error: &PpError) -> OperationErrorCode {
         | PpError::InvalidRequest(_)
         | PpError::InvalidRequestSource { .. }
         | PpError::SvgContract(_) => OperationErrorCode::InvalidArgument,
+        PpError::Unsupported { .. } | PpError::UnsupportedVectorContent(_) => {
+            OperationErrorCode::Unsupported
+        }
         PpError::NotFound { .. } => OperationErrorCode::NotFound,
         PpError::Conflict { .. } => OperationErrorCode::Conflict,
         PpError::PreconditionFailed { .. } => OperationErrorCode::PreconditionFailed,
-        PpError::ResourceLimit { .. } | PpError::ImageTooLarge { .. } => OperationErrorCode::ResourceLimit,
+        PpError::ResourceLimit { .. } | PpError::ImageTooLarge { .. } => {
+            OperationErrorCode::ResourceLimit
+        }
         PpError::Timeout { .. } => OperationErrorCode::Timeout,
         PpError::Cancelled { .. } => OperationErrorCode::Cancelled,
         PpError::DependencyFailed { .. } => OperationErrorCode::DependencyFailed,
         PpError::VerificationFailed { .. }
         | PpError::VectorQuality { .. }
         | PpError::QualityGate { .. } => OperationErrorCode::VerificationFailed,
-        PpError::UnsupportedVectorContent(_) => OperationErrorCode::Unsupported,
         PpError::FileIo { .. }
         | PpError::ImageDecode { .. }
         | PpError::ImageEncode { .. }
@@ -164,7 +169,8 @@ fn error_message(error: &PpError) -> String {
         PpError::InvalidOption(message) | PpError::InvalidRequest(message) => message.clone(),
         PpError::InvalidOptionSource { message, .. }
         | PpError::InvalidRequestSource { message, .. } => message.clone(),
-        PpError::NotFound { cause, .. }
+        PpError::Unsupported { cause, .. }
+        | PpError::NotFound { cause, .. }
         | PpError::Conflict { cause, .. }
         | PpError::PreconditionFailed { cause, .. }
         | PpError::ResourceLimit { cause, .. }
@@ -180,7 +186,8 @@ pub(super) fn original_error(error: &PpError) -> String {
     match error {
         PpError::InvalidOptionSource { original_error, .. }
         | PpError::InvalidRequestSource { original_error, .. } => original_error.clone(),
-        PpError::NotFound { cause, .. }
+        PpError::Unsupported { cause, .. }
+        | PpError::NotFound { cause, .. }
         | PpError::Conflict { cause, .. }
         | PpError::PreconditionFailed { cause, .. }
         | PpError::ResourceLimit { cause, .. }
@@ -228,6 +235,7 @@ fn exit_code(error: &PpError) -> i32 {
         | PpError::VectorQuality { .. }
         | PpError::QualityGate { .. }
         | PpError::VerificationFailed { .. }
+        | PpError::Unsupported { .. }
         | PpError::UnsupportedVectorContent(_) => 4,
         PpError::Conflict { .. }
         | PpError::PreconditionFailed { .. }
@@ -244,7 +252,10 @@ pub(super) fn effect_failure_to_error(failure: EffectFailure) -> PpError {
             "{}: {}",
             failure.operation, failure.cause
         )),
-        EffectFailureCode::Unsupported => PpError::UnsupportedVectorContent(failure.cause),
+        EffectFailureCode::Unsupported => PpError::Unsupported {
+            operation: failure.operation,
+            cause: failure.cause,
+        },
         EffectFailureCode::NotFound => PpError::NotFound {
             operation: failure.operation,
             cause: failure.cause,
