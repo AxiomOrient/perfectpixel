@@ -3,9 +3,9 @@ use std::path::{Component, Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    transform_icc_rgba8_to_srgb, AlphaMode, ArtifactRef, AtomicFileWriter, ColorSpec, Document,
-    FilePrecondition, ImageCodec, PixelFormat, PixelSpec, PpError, PpResult, PSD_EXPORT_SCHEMA,
-    ResolvedDocumentRaster, Sha256Digest,
+    AlphaMode, ArtifactRef, AtomicFileWriter, ColorSpec, Document, FilePrecondition, ImageCodec,
+    PixelFormat, PixelSpec, PpError, PpResult, PSD_EXPORT_SCHEMA, ResolvedDocumentRaster,
+    Sha256Digest,
 };
 
 use super::super::{
@@ -56,8 +56,18 @@ pub(super) fn export_flattened_psd(request_path: PathBuf) -> PpResult<String> {
             max_knots: request.path.max_knots,
         },
     )?;
-    verify_guard(&request_path, &request_guard, "PSD request", "document.export_psd")?;
-    verify_guard(&input, &input_guard, "PSD input", "document.export_psd")?;
+    verify_guard(
+        &request_path,
+        &request_guard,
+        "PSD request",
+        "document.export_psd",
+    )?;
+    verify_guard(
+        &input,
+        &input_guard,
+        "PSD input",
+        "document.export_psd",
+    )?;
     let output_bytes = encoded.bytes();
     let output_artifact = ArtifactRef::from_bytes("image/vnd.adobe.photoshop", output_bytes)?;
     let output_byte_count = output_bytes.len();
@@ -149,7 +159,11 @@ pub(super) fn compile_layered_psd(request_path: PathBuf) -> PpResult<String> {
         }
         let path = resolve_psd_path(base_dir, &binding.path, "artifact")?;
         validate_raster_input_path(&path)?;
-        reject_same_path(&path, &output, "document artifact and output must not collide")?;
+        reject_same_path(
+            &path,
+            &output,
+            "document artifact and output must not collide",
+        )?;
         reject_same_path(
             &request_path,
             &path,
@@ -195,9 +209,13 @@ pub(super) fn compile_layered_psd(request_path: PathBuf) -> PpResult<String> {
                         path.display()
                     )));
                 }
-                let (converted, converted_pixel, _receipt) =
-                    transform_icc_rgba8_to_srgb(&raster, &decoded_pixel, profile)?;
-                (converted, converted_pixel)
+                return Err(PpError::Unsupported {
+                    operation: DOCUMENT_PSD_OPERATION.to_string(),
+                    cause: format!(
+                        "artifact '{}' embeds an ICC profile, but DocumentIR ICC conversion is not implemented; provide an explicitly declared unprofiled sRGB artifact",
+                        path.display()
+                    ),
+                });
             }
             (ColorSpec::Unknown, None) if binding.pixel.color == ColorSpec::Srgb => {
                 // This is an explicit caller declaration, not an implicit codec fallback.
@@ -240,7 +258,12 @@ pub(super) fn compile_layered_psd(request_path: PathBuf) -> PpResult<String> {
         DOCUMENT_PSD_OPERATION,
     )?;
     for (path, guard) in &input_guards {
-        verify_guard(path, guard, "Document PSD artifact", DOCUMENT_PSD_OPERATION)?;
+        verify_guard(
+            path,
+            guard,
+            "Document PSD artifact",
+            DOCUMENT_PSD_OPERATION,
+        )?;
     }
 
     let output_artifact = ArtifactRef::from_bytes("image/vnd.adobe.photoshop", encoded.bytes())?;
@@ -306,7 +329,10 @@ fn verify_guard(
     if &actual != expected {
         return Err(PpError::PreconditionFailed {
             operation: operation.to_string(),
-            cause: format!("{label} changed while operation was running: {}", path.display()),
+            cause: format!(
+                "{label} changed while operation was running: {}",
+                path.display()
+            ),
         });
     }
     Ok(())
