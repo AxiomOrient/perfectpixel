@@ -1,14 +1,15 @@
 use std::collections::BTreeSet;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::core::{PpError, PpResult};
 
 use super::artifact_set::{
-    reject_symlink_ancestors, sync_directory, validate_relative_path, ArtifactSetConditionPhase,
-    AtomicArtifactSetOwnedEntry, AtomicArtifactSetOwnedPlan, AtomicArtifactSetWriter,
+    validate_relative_path, ArtifactSetConditionPhase, AtomicArtifactSetOwnedEntry,
+    AtomicArtifactSetOwnedPlan, AtomicArtifactSetWriter,
 };
+use super::capability;
 
 const MAX_TEMP_ATTEMPTS: usize = 64;
 const MAX_DIRECTORY_ENTRIES: usize = 64;
@@ -18,10 +19,11 @@ const MAX_DIRECTORY_TREE_ENTRIES: usize = MAX_DIRECTORY_ENTRIES * (MAX_RELATIVE_
 
 /// Publishes one file through a same-directory temporary file.
 ///
-/// The temporary bytes and file metadata are synchronized before rename. Rename
-/// is the visible commit point. An error before rename preserves the previous
-/// destination; a parent-directory synchronization error is reported after the
-/// replacement may already be visible.
+/// Every path component is resolved with descriptor-relative no-follow I/O.
+/// Temporary bytes are durably synchronized before `renameat`; the containing
+/// directory is synchronized as part of the rename commit. An error before the
+/// rename preserves the previous destination. A durability error after rename
+/// is reported as failure and never converted into success.
 pub struct AtomicFileWriter;
 
 /// A single verified member of an atomically replaced artifact directory.
@@ -44,9 +46,8 @@ struct DirectoryPublicationGuard {
 impl AtomicFileWriter {
     pub fn write_bytes(path: impl AsRef<Path>, bytes: &[u8]) -> PpResult<()> {
         let path = prepare_file_path(path.as_ref())?;
-        let parent = path.parent().expect("prepared file target has a parent");
         let (tmp, file) = create_temp_file(&path)?;
-        match write_temp_and_commit(&path, &tmp, parent, file, bytes) {
+        match write_temp_and_commit(&path, &tmp, file, bytes) {
             Ok(()) => Ok(()),
             Err(error) => cleanup_temp_after_failure(&tmp, error),
         }
@@ -162,22 +163,21 @@ fn prepare_file_path(requested: &Path) -> PpResult<PathBuf> {
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    reject_symlink_ancestors(parent)?;
-    fs::create_dir_all(parent).map_err(|source| file_error(parent, source))?;
-    reject_symlink_ancestors(parent)?;
-    let canonical_parent = fs::canonicalize(parent).map_err(|source| file_error(parent, source))?;
-    let target = canonical_parent.join(
-        requested
-            .file_name()
-            .expect("validated file target has a file name"),
-    );
-    match fs::symlink_metadata(&target) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => Err(
-            invalid_destination_error(&target, "file target must be a regular non-symlink file"),
-        ),
-        Ok(_) => Ok(target),
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(target),
-        Err(source) => Err(file_error(&target, source)),
+    capability::create_dir_all(parent).map_err(|source| file_error(parent, source))?;
+    match capability::open_read(requested) {
+        Ok(file) if !file.metadata().map_err(|source| file_error(requested, source))?.is_file() => {
+            Err(invalid_destination_error(
+                requested,
+                "file target must be a regular non-symlink file",
+            ))
+        }
+        Ok(_) => Ok(requested.to_path_buf()),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(requested.to_path_buf()),
+        Err(source) if source.raw_os_error() == Some(libc::ELOOP) => Err(invalid_destination_error(
+            requested,
+            "file target must be a regular non-symlink file",
+        )),
+        Err(source) => Err(file_error(requested, source)),
     }
 }
 
@@ -345,38 +345,26 @@ fn collect_directory_tree(
     Ok(())
 }
 
-fn write_temp_and_commit(
-    path: &Path,
-    tmp: &Path,
-    parent: &Path,
-    mut file: File,
-    bytes: &[u8],
-) -> PpResult<()> {
+fn write_temp_and_commit(path: &Path, tmp: &Path, mut file: File, bytes: &[u8]) -> PpResult<()> {
     file.write_all(bytes).map_err(|source| PpError::FileIo {
         path: tmp.to_path_buf(),
         message: source.to_string(),
     })?;
-    file.sync_all().map_err(|source| PpError::FileIo {
+    capability::sync_file_durable(&file).map_err(|source| PpError::FileIo {
         path: tmp.to_path_buf(),
         message: source.to_string(),
     })?;
     drop(file);
-    fs::rename(tmp, path).map_err(|source| PpError::FileIo {
+    capability::rename(tmp, path).map_err(|source| PpError::FileIo {
         path: path.to_path_buf(),
-        message: source.to_string(),
-    })?;
-    sync_directory(parent).map_err(|error| PpError::FileIo {
-        path: path.to_path_buf(),
-        message: format!(
-            "replacement committed, but parent-directory durability confirmation failed: {error}"
-        ),
+        message: format!("replacement/durability commit failed: {source}"),
     })
 }
 
 fn create_temp_file(path: &Path) -> PpResult<(PathBuf, File)> {
     for attempt in 0..MAX_TEMP_ATTEMPTS {
         let tmp = temp_path(path, "tmp", attempt);
-        match OpenOptions::new().write(true).create_new(true).open(&tmp) {
+        match capability::create_new(&tmp) {
             Ok(file) => return Ok((tmp, file)),
             Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(source) => return Err(file_error(&tmp, source)),
@@ -389,12 +377,12 @@ fn create_temp_file(path: &Path) -> PpResult<(PathBuf, File)> {
 }
 
 fn cleanup_temp_after_failure(tmp: &Path, primary: PpError) -> PpResult<()> {
-    match fs::remove_file(tmp) {
+    match capability::remove_file(tmp) {
         Ok(()) => Err(primary),
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => Err(primary),
         Err(source) => Err(PpError::FileIo {
             path: tmp.to_path_buf(),
-            message: format!("{primary}; failed to remove temporary file: {source}"),
+            message: format!("{primary}; failed to durably remove temporary file: {source}"),
         }),
     }
 }
