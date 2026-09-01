@@ -1,4 +1,4 @@
-use super::{PpError, PpResult, Raster};
+use super::{linear16_to_srgb8, srgb8_to_linear16, PpError, PpResult, Raster};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlendMode {
@@ -35,8 +35,6 @@ pub fn composite_source_over_linear_srgb(
 }
 
 fn composite_pixel(backdrop: &[u8], source: &[u8], output: &mut [u8], blend: BlendMode) {
-    // Exact algebraic identity/replacement cases bypass fixed-point round trips. This keeps
-    // publication bytes byte-for-byte stable where source-over mathematically promises it.
     if source[3] == 0 {
         output.copy_from_slice(backdrop);
         return;
@@ -58,8 +56,8 @@ fn composite_pixel(backdrop: &[u8], source: &[u8], output: &mut [u8], blend: Ble
     }
 
     for channel in 0..3 {
-        let cb = u32::from(SRGB8_TO_LINEAR16[backdrop[channel] as usize]);
-        let cs = u32::from(SRGB8_TO_LINEAR16[source[channel] as usize]);
+        let cb = u32::from(srgb8_to_linear16(backdrop[channel]));
+        let cs = u32::from(srgb8_to_linear16(source[channel]));
         let blended = blend_channel(cb, cs, blend);
 
         // W3C blending followed by Porter-Duff source-over:
@@ -113,49 +111,6 @@ fn u16_to_u8(value: u32) -> u8 {
     ((value.min(65_535) + 128) / 257) as u8
 }
 
-fn linear16_to_srgb8(value: u16) -> u8 {
-    match SRGB8_TO_LINEAR16.binary_search(&value) {
-        Ok(index) => index as u8,
-        Err(0) => 0,
-        Err(256) => 255,
-        Err(index) => {
-            let lower = SRGB8_TO_LINEAR16[index - 1];
-            let upper = SRGB8_TO_LINEAR16[index];
-            if value - lower <= upper - value {
-                (index - 1) as u8
-            } else {
-                index as u8
-            }
-        }
-    }
-}
-
-// IEC 61966-2-1 sRGB transfer function sampled at all RGBA8 code values and rounded to u16.
-// Keeping this table in source avoids platform/libm-dependent pow() differences in publication
-// bytes while preserving explicit linear-light compositing semantics.
-const SRGB8_TO_LINEAR16: [u16; 256] = [
-    0, 20, 40, 60, 80, 99, 119, 139, 159, 179, 199, 219, 241, 264, 288, 313,
-    340, 367, 396, 427, 458, 491, 526, 562, 599, 637, 677, 718, 761, 805, 851, 898,
-    947, 997, 1048, 1101, 1156, 1212, 1270, 1330, 1391, 1453, 1517, 1583, 1651, 1720,
-    1790, 1863, 1937, 2013, 2090, 2170, 2250, 2333, 2418, 2504, 2592, 2681, 2773, 2866,
-    2961, 3058, 3157, 3258, 3360, 3464, 3570, 3678, 3788, 3900, 4014, 4129, 4247, 4366,
-    4488, 4611, 4736, 4864, 4993, 5124, 5257, 5392, 5530, 5669, 5810, 5953, 6099, 6246,
-    6395, 6547, 6700, 6856, 7014, 7174, 7335, 7500, 7666, 7834, 8004, 8177, 8352, 8528,
-    8708, 8889, 9072, 9258, 9445, 9635, 9828, 10022, 10219, 10417, 10619, 10822, 11028,
-    11235, 11446, 11658, 11873, 12090, 12309, 12530, 12754, 12980, 13209, 13440, 13673,
-    13909, 14146, 14387, 14629, 14874, 15122, 15371, 15623, 15878, 16135, 16394, 16656,
-    16920, 17187, 17456, 17727, 18001, 18277, 18556, 18837, 19121, 19407, 19696, 19987,
-    20281, 20577, 20876, 21177, 21481, 21787, 22096, 22407, 22721, 23038, 23357, 23678,
-    24002, 24329, 24658, 24990, 25325, 25662, 26001, 26344, 26688, 27036, 27386, 27739,
-    28094, 28452, 28813, 29176, 29542, 29911, 30282, 30656, 31033, 31412, 31794, 32179,
-    32567, 32957, 33350, 33745, 34143, 34544, 34948, 35355, 35764, 36176, 36591, 37008,
-    37429, 37852, 38278, 38706, 39138, 39572, 40009, 40449, 40891, 41337, 41785, 42236,
-    42690, 43147, 43606, 44069, 44534, 45002, 45473, 45947, 46423, 46903, 47385, 47871,
-    48359, 48850, 49344, 49841, 50341, 50844, 51349, 51858, 52369, 52884, 53401, 53921,
-    54445, 54971, 55500, 56032, 56567, 57105, 57646, 58190, 58737, 59287, 59840, 60396,
-    60955, 61517, 62082, 62650, 63221, 63795, 64372, 64952, 65535,
-];
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -176,15 +131,5 @@ mod tests {
         let output = composite_source_over_linear_srgb(&backdrop, &source, BlendMode::Normal)?;
         assert_eq!(output, source);
         Ok(())
-    }
-
-    #[test]
-    fn transfer_lut_is_monotonic_and_round_trips_codes() {
-        for window in SRGB8_TO_LINEAR16.windows(2) {
-            assert!(window[0] < window[1]);
-        }
-        for code in 0u8..=255 {
-            assert_eq!(linear16_to_srgb8(SRGB8_TO_LINEAR16[code as usize]), code);
-        }
     }
 }
