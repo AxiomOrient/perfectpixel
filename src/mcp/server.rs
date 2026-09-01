@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    num::{NonZeroU32, NonZeroUsize},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -20,8 +21,10 @@ use tokio::sync::{oneshot, Semaphore};
 use crate::{
     adapters::motion::MotionRequest,
     adapters::sprite::{NormalizeRequest, SpriteBundleRequest},
-    application::{execute, execute_operation, ApplicationRequest},
-    Operation,
+    application::{execute_error, execute_operation},
+    parse_resample_filter, parse_srgb8_hex, parse_vector_detail, parse_vector_preset,
+    parse_vector_profile, JpegQuality, Operation, PpError, ScaleFactor, SvgProfile, UnitScore,
+    VectorPresetSelection,
 };
 
 use super::{
@@ -61,14 +64,16 @@ struct OperationResult {
 #[derive(Debug)]
 enum PreparationError {
     Root(RootPathError),
+    Semantic(PpError),
     Invalid(String),
 }
 
 impl PreparationError {
-    fn message(&self) -> String {
+    fn transport_message(&self) -> Option<String> {
         match self {
-            Self::Root(error) => error.message().to_string(),
-            Self::Invalid(message) => message.clone(),
+            Self::Root(error) => Some(error.message().to_string()),
+            Self::Invalid(message) => Some(message.clone()),
+            Self::Semantic(_) => None,
         }
     }
 }
@@ -140,9 +145,14 @@ impl PerfectPixelMcp {
         }
     }
 
-    async fn run_operation<F>(&self, tool_name: &'static str, prepare: F) -> CallToolResult
+    async fn run_operation<F>(
+        &self,
+        tool_name: &'static str,
+        operation_name: &'static str,
+        prepare: F,
+    ) -> CallToolResult
     where
-        F: FnOnce(&Root) -> Result<ApplicationRequest, PreparationError> + Send + 'static,
+        F: FnOnce(&Root) -> Result<Operation, PreparationError> + Send + 'static,
     {
         let permit = match Arc::clone(&self.active_operation).try_acquire_owned() {
             Ok(permit) => permit,
@@ -165,46 +175,18 @@ impl PerfectPixelMcp {
         let (sender, receiver) = oneshot::channel();
         tokio::task::spawn_blocking(move || {
             let result = match prepare(&root) {
-                Ok(request) => {
-                    // ApplicationRequest is transport normalization only. Operation is the first
-                    // semantic state and is identical to the state produced by the CLI adapter.
-                    match Operation::try_from(request.clone()) {
-                        Ok(operation) => match revalidate_operation(&root, &operation) {
-                            Ok(()) => {
-                                let output = execute_operation(operation);
-                                application_result(tool_name, output.exit_code, &output.stdout)
-                            }
-                            Err(error) => OperationResult {
-                                envelope: error_envelope(
-                                    tool_name,
-                                    2,
-                                    json!({
-                                        "ok": false,
-                                        "code": "rootOrPathRejected",
-                                        "message": error.message(),
-                                    }),
-                                ),
-                            },
-                        },
-                        Err(_) => {
-                            // Use the application entry for canonical error classification and
-                            // serialization instead of creating an MCP-specific semantic error.
-                            let output = execute(request);
-                            application_result(tool_name, output.exit_code, &output.stdout)
-                        }
+                Ok(operation) => match revalidate_operation(&root, &operation) {
+                    Ok(()) => {
+                        let output = execute_operation(operation);
+                        application_result(tool_name, output.exit_code, &output.stdout)
                     }
-                }
-                Err(error) => OperationResult {
-                    envelope: error_envelope(
-                        tool_name,
-                        2,
-                        json!({
-                            "ok": false,
-                            "code": "rootOrPathRejected",
-                            "message": error.message(),
-                        }),
-                    ),
+                    Err(error) => transport_preparation_result(tool_name, error),
                 },
+                Err(PreparationError::Semantic(error)) => {
+                    let output = execute_error(error, operation_name);
+                    application_result(tool_name, output.exit_code, &output.stdout)
+                }
+                Err(error) => transport_preparation_result(tool_name, error),
             };
             let _ = sender.send(result);
             drop(permit);
@@ -240,7 +222,7 @@ impl PerfectPixelMcp {
         Parameters(params): Parameters<SchemaParams>,
     ) -> CallToolResult {
         let _ = params;
-        self.run_operation("perfectpixel_schema", |_| Ok(ApplicationRequest::Schema))
+        self.run_operation("perfectpixel_schema", "system.schema", |_| Ok(Operation::Schema))
             .await
     }
 
@@ -254,11 +236,11 @@ impl PerfectPixelMcp {
         &self,
         Parameters(params): Parameters<InspectParams>,
     ) -> CallToolResult {
-        self.run_operation("perfectpixel_inspect", move |root| {
+        self.run_operation("perfectpixel_inspect", "image.inspect", move |root| {
             let input = root
                 .input_file(&params.input_path)
                 .map_err(PreparationError::Root)?;
-            Ok(ApplicationRequest::Inspect { input })
+            Ok(Operation::Inspect { input })
         })
         .await
     }
@@ -273,22 +255,8 @@ impl PerfectPixelMcp {
         &self,
         Parameters(params): Parameters<ConvertParams>,
     ) -> CallToolResult {
-        self.run_operation("perfectpixel_convert", move |root| {
-            let input = root
-                .input_file(&params.input_path)
-                .map_err(PreparationError::Root)?;
-            let output = root
-                .output_file(&params.output_path)
-                .map_err(PreparationError::Root)?;
-            Ok(ApplicationRequest::Convert {
-                input,
-                output,
-                width: params.width,
-                height: params.height,
-                filter: params.filter.map(|filter| filter.as_str().to_string()),
-                jpeg_quality: params.jpeg_quality,
-                background: params.background,
-            })
+        self.run_operation("perfectpixel_convert", "image.convert", move |root| {
+            prepare_convert(root, params)
         })
         .await
     }
@@ -303,21 +271,8 @@ impl PerfectPixelMcp {
         &self,
         Parameters(params): Parameters<UpscaleParams>,
     ) -> CallToolResult {
-        self.run_operation("perfectpixel_upscale", move |root| {
-            let input = root
-                .input_file(&params.input_path)
-                .map_err(PreparationError::Root)?;
-            let output = root
-                .output_file(&params.output_path)
-                .map_err(PreparationError::Root)?;
-            Ok(ApplicationRequest::Upscale {
-                input,
-                output,
-                scale: params.scale,
-                filter: params.filter.map(|filter| filter.as_str().to_string()),
-                jpeg_quality: params.jpeg_quality,
-                background: params.background,
-            })
+        self.run_operation("perfectpixel_upscale", "image.upscale", move |root| {
+            prepare_upscale(root, params)
         })
         .await
     }
@@ -332,7 +287,7 @@ impl PerfectPixelMcp {
         &self,
         Parameters(params): Parameters<RequestDirectoryParams>,
     ) -> CallToolResult {
-        self.run_operation("perfectpixel_normalize", move |root| {
+        self.run_operation("perfectpixel_normalize", "sprite.normalize", move |root| {
             prepare_normalize(root, params)
         })
         .await
@@ -348,8 +303,10 @@ impl PerfectPixelMcp {
         &self,
         Parameters(params): Parameters<RequestDirectoryParams>,
     ) -> CallToolResult {
-        self.run_operation("perfectpixel_bundle", move |root| prepare_bundle(root, params))
-            .await
+        self.run_operation("perfectpixel_bundle", "sprite.compile", move |root| {
+            prepare_bundle(root, params)
+        })
+        .await
     }
 
     #[tool(
@@ -362,8 +319,10 @@ impl PerfectPixelMcp {
         &self,
         Parameters(params): Parameters<VectorParams>,
     ) -> CallToolResult {
-        self.run_operation("perfectpixel_vector", move |root| prepare_vector(root, params))
-            .await
+        self.run_operation("perfectpixel_vector", "vector.compile", move |root| {
+            prepare_vector(root, params)
+        })
+        .await
     }
 
     #[tool(
@@ -376,7 +335,7 @@ impl PerfectPixelMcp {
         &self,
         Parameters(params): Parameters<VectorAnalyzeParams>,
     ) -> CallToolResult {
-        self.run_operation("perfectpixel_vector_analyze", move |root| {
+        self.run_operation("perfectpixel_vector_analyze", "vector.analyze", move |root| {
             prepare_vector_analyze(root, params)
         })
         .await
@@ -392,14 +351,14 @@ impl PerfectPixelMcp {
         &self,
         Parameters(params): Parameters<MotionScaffoldParams>,
     ) -> CallToolResult {
-        self.run_operation("perfectpixel_motion_scaffold", move |root| {
+        self.run_operation("perfectpixel_motion_scaffold", "motion.scaffold", move |root| {
             let input = root
                 .input_file(&params.input_path)
                 .map_err(PreparationError::Root)?;
             let output_dir = root
                 .output_dir(&params.output_dir)
                 .map_err(PreparationError::Root)?;
-            Ok(ApplicationRequest::MotionScaffold { input, output_dir })
+            Ok(Operation::ScaffoldMotion { input, output_dir })
         })
         .await
     }
@@ -414,7 +373,7 @@ impl PerfectPixelMcp {
         &self,
         Parameters(params): Parameters<MotionBuildParams>,
     ) -> CallToolResult {
-        self.run_operation("perfectpixel_motion_build", move |root| {
+        self.run_operation("perfectpixel_motion_build", "motion.compile", move |root| {
             prepare_motion_build(root, params)
         })
         .await
@@ -449,17 +408,88 @@ impl ServerHandler for PerfectPixelMcp {
     }
 }
 
+fn prepare_convert(root: &Root, params: ConvertParams) -> Result<Operation, PreparationError> {
+    let input = root
+        .input_file(&params.input_path)
+        .map_err(PreparationError::Root)?;
+    let output = root
+        .output_file(&params.output_path)
+        .map_err(PreparationError::Root)?;
+    Ok(Operation::Convert {
+        input,
+        output,
+        width: optional_nonzero_u32(params.width, "width")?,
+        height: optional_nonzero_u32(params.height, "height")?,
+        filter: params
+            .filter
+            .map(|value| parse_resample_filter(value.as_str()))
+            .transpose()
+            .map_err(semantic_input)?,
+        jpeg_quality: params
+            .jpeg_quality
+            .map(JpegQuality::new)
+            .transpose()
+            .map_err(semantic_input)?,
+        background: params
+            .background
+            .as_deref()
+            .map(|raw| {
+                parse_srgb8_hex(raw).ok_or_else(|| {
+                    PreparationError::Semantic(PpError::InvalidOption(
+                        "--background must be a #RRGGBB color".to_string(),
+                    ))
+                })
+            })
+            .transpose()?,
+    })
+}
+
+fn prepare_upscale(root: &Root, params: UpscaleParams) -> Result<Operation, PreparationError> {
+    let input = root
+        .input_file(&params.input_path)
+        .map_err(PreparationError::Root)?;
+    let output = root
+        .output_file(&params.output_path)
+        .map_err(PreparationError::Root)?;
+    Ok(Operation::Upscale {
+        input,
+        output,
+        scale: ScaleFactor::new(params.scale).map_err(semantic_input)?,
+        filter: params
+            .filter
+            .map(|value| parse_resample_filter(value.as_str()))
+            .transpose()
+            .map_err(semantic_input)?,
+        jpeg_quality: params
+            .jpeg_quality
+            .map(JpegQuality::new)
+            .transpose()
+            .map_err(semantic_input)?,
+        background: params
+            .background
+            .as_deref()
+            .map(|raw| {
+                parse_srgb8_hex(raw).ok_or_else(|| {
+                    PreparationError::Semantic(PpError::InvalidOption(
+                        "--background must be a #RRGGBB color".to_string(),
+                    ))
+                })
+            })
+            .transpose()?,
+    })
+}
+
 fn prepare_normalize(
     root: &Root,
     params: RequestDirectoryParams,
-) -> Result<ApplicationRequest, PreparationError> {
+) -> Result<Operation, PreparationError> {
     let request = root
         .input_file(&params.request_path)
         .map_err(PreparationError::Root)?;
     let output_dir = root
         .output_dir(&params.output_dir)
         .map_err(PreparationError::Root)?;
-    Ok(ApplicationRequest::Normalize {
+    Ok(Operation::NormalizeSprite {
         request,
         output_dir,
     })
@@ -468,23 +498,20 @@ fn prepare_normalize(
 fn prepare_bundle(
     root: &Root,
     params: RequestDirectoryParams,
-) -> Result<ApplicationRequest, PreparationError> {
+) -> Result<Operation, PreparationError> {
     let request = root
         .input_file(&params.request_path)
         .map_err(PreparationError::Root)?;
     let output_dir = root
         .output_dir(&params.output_dir)
         .map_err(PreparationError::Root)?;
-    Ok(ApplicationRequest::Bundle {
+    Ok(Operation::CompileSprite {
         request,
         output_dir,
     })
 }
 
-fn prepare_vector(
-    root: &Root,
-    params: VectorParams,
-) -> Result<ApplicationRequest, PreparationError> {
+fn prepare_vector(root: &Root, params: VectorParams) -> Result<Operation, PreparationError> {
     let input = root
         .input_file(&params.input_path)
         .map_err(PreparationError::Root)?;
@@ -506,18 +533,56 @@ fn prepare_vector(
         .as_deref()
         .map(|path| root.output_dir(path).map_err(PreparationError::Root))
         .transpose()?;
-    Ok(ApplicationRequest::Vector {
+
+    let preset = params
+        .preset
+        .map(|value| parse_vector_preset(value.as_str()))
+        .transpose()
+        .map_err(semantic_input)?
+        .unwrap_or(VectorPresetSelection::Auto);
+    let profile = params
+        .profile
+        .map(|value| parse_vector_profile(value.as_str()))
+        .transpose()
+        .map_err(semantic_input)?
+        .unwrap_or(SvgProfile::Compact);
+    let detail = params
+        .detail
+        .and_then(|value| value.as_cli_value())
+        .map(|raw| parse_vector_detail(&raw))
+        .transpose()
+        .map_err(semantic_input)?
+        .flatten();
+    let minimum_quality = params
+        .min_quality
+        .map(UnitScore::new)
+        .transpose()
+        .map_err(semantic_input)?;
+    let maximum_quality_loss = params
+        .max_quality_loss
+        .map(UnitScore::new)
+        .transpose()
+        .map_err(semantic_input)?;
+    let maximum_paths = params
+        .max_paths
+        .map(|value| {
+            NonZeroUsize::new(value).ok_or_else(|| {
+                PreparationError::Semantic(PpError::InvalidOption(
+                    "--max-paths must be a positive integer".to_string(),
+                ))
+            })
+        })
+        .transpose()?;
+
+    Ok(Operation::CompileVector {
         input,
         output,
-        preset: params.preset.map(|value| value.as_str().to_string()),
-        profile: params.profile.map(|value| value.as_str().to_string()),
-        detail: params
-            .detail
-            .and_then(|value| value.as_cli_value())
-            .and_then(|value| value.parse().ok()),
-        min_quality: params.min_quality,
-        max_quality_loss: params.max_quality_loss,
-        max_paths: params.max_paths,
+        preset,
+        profile,
+        detail,
+        minimum_quality,
+        maximum_quality_loss,
+        maximum_paths,
         policy,
         report,
         diagnostics,
@@ -527,7 +592,7 @@ fn prepare_vector(
 fn prepare_vector_analyze(
     root: &Root,
     params: VectorAnalyzeParams,
-) -> Result<ApplicationRequest, PreparationError> {
+) -> Result<Operation, PreparationError> {
     let input = root
         .input_file(&params.input_path)
         .map_err(PreparationError::Root)?;
@@ -541,10 +606,22 @@ fn prepare_vector_analyze(
         .as_deref()
         .map(|path| root.output_file(path).map_err(PreparationError::Root))
         .transpose()?;
-    Ok(ApplicationRequest::VectorAnalyze {
+    let preset = params
+        .preset
+        .map(|value| parse_vector_preset(value.as_str()))
+        .transpose()
+        .map_err(semantic_input)?
+        .unwrap_or(VectorPresetSelection::Auto);
+    let profile = params
+        .profile
+        .map(|value| parse_vector_profile(value.as_str()))
+        .transpose()
+        .map_err(semantic_input)?
+        .unwrap_or(SvgProfile::Compact);
+    Ok(Operation::AnalyzeVector {
         input,
-        preset: params.preset.map(|value| value.as_str().to_string()),
-        profile: params.profile.map(|value| value.as_str().to_string()),
+        preset,
+        profile,
         policy,
         report,
     })
@@ -553,17 +630,36 @@ fn prepare_vector_analyze(
 fn prepare_motion_build(
     root: &Root,
     params: MotionBuildParams,
-) -> Result<ApplicationRequest, PreparationError> {
+) -> Result<Operation, PreparationError> {
     let request = root
         .input_file(&params.request_path)
         .map_err(PreparationError::Root)?;
     let output_dir = root
         .output_dir(&params.output_dir)
         .map_err(PreparationError::Root)?;
-    Ok(ApplicationRequest::MotionBuild {
+    Ok(Operation::CompileMotion {
         request,
         output_dir,
     })
+}
+
+fn optional_nonzero_u32(
+    value: Option<u32>,
+    label: &str,
+) -> Result<Option<NonZeroU32>, PreparationError> {
+    value
+        .map(|value| {
+            NonZeroU32::new(value).ok_or_else(|| {
+                PreparationError::Semantic(PpError::InvalidOption(format!(
+                    "{label} must be a positive integer"
+                )))
+            })
+        })
+        .transpose()
+}
+
+fn semantic_input(error: impl std::fmt::Display) -> PreparationError {
+    PreparationError::Semantic(PpError::InvalidOption(error.to_string()))
 }
 
 enum RequestPreparse<T> {
@@ -683,11 +779,14 @@ fn revalidate_operation(root: &Root, operation: &Operation) -> Result<(), Prepar
             revalidate_motion_request(root, request)?;
             output_dir(destination)
         }
-        Operation::Edit { .. } | Operation::ExportPsd { .. } | Operation::ChromaPlan { .. } => {
-            Err(PreparationError::Invalid(
-                "operation is not exposed by the MCP transport".to_string(),
-            ))
-        }
+        Operation::Edit { .. }
+        | Operation::ExportPsd { .. }
+        | Operation::CompileDocumentPsd { .. }
+        | Operation::ChromaPlan { .. }
+        | Operation::CompileTexture { .. }
+        | Operation::AppleVisionForegroundInstances { .. } => Err(PreparationError::Invalid(
+            "operation is not exposed by the MCP transport".to_string(),
+        )),
     }
 }
 
@@ -729,6 +828,23 @@ fn revalidate_motion_request(root: &Root, request: &Path) -> Result<(), Preparat
             .map_err(PreparationError::Root)?;
     }
     Ok(())
+}
+
+fn transport_preparation_result(tool_name: &str, error: PreparationError) -> OperationResult {
+    let message = error
+        .transport_message()
+        .unwrap_or_else(|| "internal MCP preparation error".to_string());
+    OperationResult {
+        envelope: error_envelope(
+            tool_name,
+            2,
+            json!({
+                "ok": false,
+                "code": "rootOrPathRejected",
+                "message": message,
+            }),
+        ),
+    }
 }
 
 fn application_result(tool_name: &str, exit_code: i32, stdout: &str) -> OperationResult {
@@ -839,6 +955,29 @@ mod tests {
         assert!(startup(vec!["--help".to_string(), "extra".to_string()]).is_err());
     }
 
+    #[test]
+    fn revalidation_explicitly_rejects_non_mcp_operations() {
+        let root_path = temp_root("not-exposed");
+        let root = Root::new(root_path.clone()).expect("root");
+        for operation in [
+            Operation::CompileDocumentPsd {
+                request: root_path.join("a.json"),
+            },
+            Operation::CompileTexture {
+                request: root_path.join("a.json"),
+            },
+            Operation::AppleVisionForegroundInstances {
+                request: root_path.join("a.json"),
+            },
+        ] {
+            assert!(matches!(
+                revalidate_operation(&root, &operation),
+                Err(PreparationError::Invalid(_))
+            ));
+        }
+        let _ = fs::remove_dir_all(root_path);
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn concurrent_call_is_busy_and_cancellation_keeps_the_permit() {
         let root_path = temp_root("busy");
@@ -852,11 +991,11 @@ mod tests {
         let first_finished = Arc::clone(&finished);
         let first = tokio::spawn(async move {
             first_server
-                .run_operation("test", move |_| {
+                .run_operation("test", "system.schema", move |_| {
                     first_started.store(true, std::sync::atomic::Ordering::Release);
                     std::thread::sleep(Duration::from_millis(150));
                     first_finished.store(true, std::sync::atomic::Ordering::Release);
-                    Ok(ApplicationRequest::Schema)
+                    Ok(Operation::Schema)
                 })
                 .await
         });
@@ -866,7 +1005,7 @@ mod tests {
         }
 
         let busy = server
-            .run_operation("test", |_| Ok(ApplicationRequest::Schema))
+            .run_operation("test", "system.schema", |_| Ok(Operation::Schema))
             .await;
         let busy_value = envelope(busy);
         assert_eq!(busy_value["result"]["code"], "busy");
@@ -881,7 +1020,7 @@ mod tests {
         }
 
         let after = server
-            .run_operation("test", |_| Ok(ApplicationRequest::Schema))
+            .run_operation("test", "system.schema", |_| Ok(Operation::Schema))
             .await;
         let after_value = envelope(after);
         assert_eq!(after_value["ok"], true);
