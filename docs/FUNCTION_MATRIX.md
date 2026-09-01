@@ -16,7 +16,7 @@ A capability is working only when its public trigger reaches the listed semantic
 | `bundle` | sprite semantics / atlas plan | deterministic packing + artifact-set publisher | complete verified sprite generation only |
 | `texture-compile` | texture operation + KTX2 verifier | SHA-pinned KTX process Effects | current candidate → structure + decode roundtrip verification → checked file publication |
 | `vector` | PerfectPixel vector policy / verified route | native candidate + resvg verification + checked writers | backend name never decides success; rejection cannot publish final SVG |
-| `vector-analyze` | PerfectPixel vector policy / route analysis | bounded source snapshot/stdout or report | candidate-free; cannot publish SVG |
+| `vector-analyze` | PerfectPixel vector policy / route analysis | bounded source snapshot/stdout or checked report publication | candidate-free and never publishes SVG; operation metadata is conservatively write-capable because `--report` can mutate |
 | `vision-foreground-instances` | mask/alpha/geometry verification core | SHA-pinned Apple Vision helper Effect | current identity → deterministic mask cleanup/verification → checked directory publication |
 | `motion-scaffold` | deterministic motion scaffold compiler | recoverable artifact-set publisher | new scaffold invalidates prior build artifacts bound to old scene |
 | `motion-build` | deterministic motion compiler | recoverable artifact-set publisher | verified request/source identity before commit |
@@ -48,6 +48,7 @@ A capability is working only when its public trigger reaches the listed semantic
 - Perceptual raster verification is CIEDE2000 plus explicit alpha support; exact/region/geometry gates remain independent.
 - External process success is only a candidate event. `EffectIdentity` prevents stale results from becoming current state.
 - Cancelled, timed-out, failed, stale, or unverified external Effects cannot publish artifacts.
+- Operation metadata is conservative when an invocation can publish conditionally; a write-capable command is never advertised as read-only.
 - Mutation captures destination/input preconditions before expensive work and commits only through the atomic publication authority.
 - VTracer remains absent until the same verified vector route can select and identity-pin it; disconnected optional backend code is not retained.
 
