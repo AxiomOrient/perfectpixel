@@ -4,7 +4,8 @@ use perfectpixel::{
 };
 
 #[test]
-fn artifact_ref_deserialization_is_strict_and_validated() -> Result<(), Box<dyn std::error::Error>> {
+fn artifact_ref_deserialization_is_strict_and_validated() -> Result<(), Box<dyn std::error::Error>>
+{
     let digest = Sha256Digest::from_bytes(b"artifact");
     let value = serde_json::json!({
         "sha256": digest.as_str(),
@@ -26,7 +27,8 @@ fn artifact_ref_deserialization_is_strict_and_validated() -> Result<(), Box<dyn 
 }
 
 #[test]
-fn pixel_spec_requires_explicit_alpha_and_color_semantics() -> Result<(), Box<dyn std::error::Error>> {
+fn pixel_spec_requires_explicit_alpha_and_color_semantics() -> Result<(), Box<dyn std::error::Error>>
+{
     let digest = Sha256Digest::from_bytes(b"icc-profile");
     let spec = PixelSpec::new(
         PixelFormat::Rgba8,
@@ -48,7 +50,8 @@ fn pixel_spec_requires_explicit_alpha_and_color_semantics() -> Result<(), Box<dy
 }
 
 #[test]
-fn exact_verification_is_machine_readable_and_fails_closed() -> Result<(), Box<dyn std::error::Error>> {
+fn exact_verification_is_machine_readable_and_fails_closed(
+) -> Result<(), Box<dyn std::error::Error>> {
     let raster = Raster::new(2, 1, vec![255, 0, 0, 255, 0, 0, 0, 0])?;
     let pixel_spec = PixelSpec::new(PixelFormat::Rgba8, AlphaMode::Straight, ColorSpec::Unknown);
     let expected_digest = Sha256Digest::from_bytes(b"expected-output");
@@ -75,5 +78,8 @@ fn exact_verification_is_machine_readable_and_fails_closed() -> Result<(), Box<d
     assert!(report.checks[1].passed);
     assert!(!report.checks[2].passed);
     assert!(serde_json::to_value(report)?.is_object());
+
+    let empty: VerificationSpec = serde_json::from_value(serde_json::json!({"exact": []}))?;
+    assert!(verify_raster_exact(&empty, &raster, &pixel_spec, None).is_err());
     Ok(())
 }

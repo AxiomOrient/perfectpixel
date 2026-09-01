@@ -5,6 +5,9 @@ edition = "2021"
 rust-version = "1.97"
 license = "MIT"
 description = "Deterministic local raster, sprite, vector, and motion asset compiler."
+repository = "https://github.com/AxiomOrient/perfectpixel"
+homepage = "https://github.com/AxiomOrient/perfectpixel"
+documentation = "https://axiomorient.github.io/perfectpixel/"
 
 [lib]
 name = "perfectpixel"

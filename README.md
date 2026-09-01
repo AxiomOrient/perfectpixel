@@ -204,3 +204,7 @@ or if a public command is missing from [the capability matrix](docs/FUNCTION_MAT
 
 The complete runtime gate is verified on macOS arm64. Windows and every non-Unix target fail at
 crate compilation; no non-Unix runtime behavior is supported. See [Residual boundaries](docs/ARCHITECTURE.md#residual-boundaries).
+
+## GitHub 배포 분류
+
+PerfectPixel의 주 제품은 사람이 직접 실행하는 이미지 도구 CLI와 typed local stdio MCP adapter이므로 canonical 조직은 [`AxiomOrient`](https://github.com/AxiomOrient)다. 내부 crate는 실행 제품을 지원하며 별도 SDK가 주 제품은 아니다.

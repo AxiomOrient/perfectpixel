@@ -12,6 +12,11 @@ pub struct VerificationSpec {
 
 impl VerificationSpec {
     pub fn validate(&self) -> PpResult<()> {
+        if self.exact.is_empty() {
+            return Err(PpError::InvalidRequest(
+                "verification must contain at least one exact assertion".to_string(),
+            ));
+        }
         for assertion in &self.exact {
             match assertion {
                 ExactAssertion::Dimensions { width, height } if *width == 0 || *height == 0 => {
@@ -167,7 +172,8 @@ mod tests {
     #[test]
     fn exact_verification_fails_closed_when_artifact_evidence_is_missing() -> crate::PpResult<()> {
         let raster = Raster::blank(1, 1)?;
-        let pixel_spec = PixelSpec::new(PixelFormat::Rgba8, AlphaMode::Straight, ColorSpec::Unknown);
+        let pixel_spec =
+            PixelSpec::new(PixelFormat::Rgba8, AlphaMode::Straight, ColorSpec::Unknown);
         let spec = VerificationSpec {
             exact: vec![ExactAssertion::ArtifactSha256 {
                 expected: Sha256Digest::from_bytes(b"expected"),
@@ -183,13 +189,24 @@ mod tests {
     #[test]
     fn verification_spec_rejects_invalid_bounds() -> crate::PpResult<()> {
         let raster = Raster::blank(1, 1)?;
-        let pixel_spec = PixelSpec::new(PixelFormat::Rgba8, AlphaMode::Straight, ColorSpec::Unknown);
+        let pixel_spec =
+            PixelSpec::new(PixelFormat::Rgba8, AlphaMode::Straight, ColorSpec::Unknown);
         let spec = VerificationSpec {
             exact: vec![ExactAssertion::AlphaBounds {
                 minimum: 200,
                 maximum: 100,
             }],
         };
+        assert!(verify_raster_exact(&spec, &raster, &pixel_spec, None).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn verification_spec_rejects_vacuous_success() -> crate::PpResult<()> {
+        let raster = Raster::blank(1, 1)?;
+        let pixel_spec =
+            PixelSpec::new(PixelFormat::Rgba8, AlphaMode::Straight, ColorSpec::Unknown);
+        let spec = VerificationSpec::default();
         assert!(verify_raster_exact(&spec, &raster, &pixel_spec, None).is_err());
         Ok(())
     }

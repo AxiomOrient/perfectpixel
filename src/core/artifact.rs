@@ -53,11 +53,7 @@ pub struct ArtifactRef {
 }
 
 impl ArtifactRef {
-    pub fn new(
-        sha256: Sha256Digest,
-        media_type: impl Into<String>,
-        bytes: u64,
-    ) -> PpResult<Self> {
+    pub fn new(sha256: Sha256Digest, media_type: impl Into<String>, bytes: u64) -> PpResult<Self> {
         let media_type = media_type.into();
         validate_media_type(&media_type)?;
         Ok(Self {
