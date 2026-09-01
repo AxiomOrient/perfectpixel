@@ -6,7 +6,10 @@ use std::{
 
 use serde::{de::DeserializeOwned, Serialize};
 
-use crate::{AtomicArtifactSetWriter, ImageCodec, PpError, PpResult, Raster};
+use crate::{
+    AtomicArtifactSetWriter, FailureContext, ImageCodec, OperationErrorCode, OperationFailure,
+    PpError, PpResult, Raster,
+};
 
 use super::{
     generation::GenerationWorkflow,
@@ -38,7 +41,11 @@ impl ApplicationOutput {
     }
 }
 
-pub(super) fn render_result(result: PpResult<String>, phase: &'static str) -> ApplicationOutput {
+pub(super) fn render_result(
+    result: PpResult<String>,
+    operation: &str,
+    phase: &'static str,
+) -> ApplicationOutput {
     match result {
         Ok(text) => ApplicationOutput::from_text(text, 0),
         Err(PpError::VectorRejected { payload }) => ApplicationOutput::from_text(payload, 4),
@@ -46,12 +53,16 @@ pub(super) fn render_result(result: PpResult<String>, phase: &'static str) -> Ap
             ApplicationOutput::from_text(payload, exit_code)
         }
         Err(error) => {
+            let path = error_path(&error);
+            let original_error = original_error(&error);
+            let failure = operation_failure(operation, phase, path.as_deref(), &original_error, &error);
             let payload = ErrorPayload {
                 ok: false,
                 message: error_message(&error),
                 phase,
-                path: error_path(&error),
-                original_error: original_error(&error),
+                path,
+                original_error,
+                failure,
             };
             let text = serde_json::to_string(&payload).unwrap_or_else(|source| source.to_string());
             ApplicationOutput::from_text(text, exit_code(&error))
@@ -68,6 +79,56 @@ pub(super) fn operation_phase(name: &str) -> &'static str {
         "vector.analyze" => "vectorAnalyze",
         "motion.scaffold" | "motion.compile" => "motion",
         _ => "application",
+    }
+}
+
+fn operation_failure(
+    operation: &str,
+    phase: &'static str,
+    path: Option<&str>,
+    cause: &str,
+    error: &PpError,
+) -> OperationFailure {
+    let mut context = vec![FailureContext {
+        key: "phase".to_string(),
+        value: phase.to_string(),
+    }];
+    if let Some(path) = path {
+        context.push(FailureContext {
+            key: "path".to_string(),
+            value: path.to_string(),
+        });
+    }
+    OperationFailure {
+        code: operation_error_code(error),
+        operation: operation.to_string(),
+        cause: cause.to_string(),
+        context,
+        retryable: false,
+    }
+}
+
+fn operation_error_code(error: &PpError) -> OperationErrorCode {
+    match error {
+        PpError::InvalidOption(_)
+        | PpError::InvalidOptionSource { .. }
+        | PpError::InvalidRequest(_)
+        | PpError::InvalidRequestSource { .. }
+        | PpError::SvgContract(_) => OperationErrorCode::InvalidArgument,
+        PpError::ImageTooLarge { .. } => OperationErrorCode::ResourceLimit,
+        PpError::UnsupportedVectorContent(_) => OperationErrorCode::Unsupported,
+        PpError::VectorQuality { .. } | PpError::QualityGate { .. } => {
+            OperationErrorCode::VerificationFailed
+        }
+        PpError::FileIo { .. }
+        | PpError::ImageDecode { .. }
+        | PpError::ImageEncode { .. }
+        | PpError::Json { .. }
+        | PpError::Vectorizer(_)
+        | PpError::SvgRender(_) => OperationErrorCode::DependencyFailed,
+        PpError::VectorRejected { .. } | PpError::CliTransactionFailed { .. } => {
+            OperationErrorCode::Internal
+        }
     }
 }
 
@@ -137,6 +198,7 @@ struct ErrorPayload {
     phase: &'static str,
     path: Option<String>,
     original_error: String,
+    failure: OperationFailure,
 }
 
 pub(super) fn serialize_json<T: Serialize>(value: &T, path: &str) -> PpResult<String> {
