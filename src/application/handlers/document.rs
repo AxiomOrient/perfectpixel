@@ -17,7 +17,7 @@ use super::super::{
 };
 
 const DOCUMENT_PSD_COMPILE_SCHEMA: &str = "perfectpixel.document-psd-compile/2";
-const DOCUMENT_PSD_OPERATION: &str = "compile_document_psd";
+const DOCUMENT_PSD_OPERATION: &str = "document.compile_psd";
 const MAX_DOCUMENT_ARTIFACTS: usize = 4096;
 
 /// Compatibility v1 export. This remains intentionally flattened while the canonical layered
@@ -56,8 +56,8 @@ pub(super) fn export_flattened_psd(request_path: PathBuf) -> PpResult<String> {
             max_knots: request.path.max_knots,
         },
     )?;
-    verify_guard(&request_path, &request_guard, "PSD request")?;
-    verify_guard(&input, &input_guard, "PSD input")?;
+    verify_guard(&request_path, &request_guard, "PSD request", "document.export_psd")?;
+    verify_guard(&input, &input_guard, "PSD input", "document.export_psd")?;
     let output_bytes = encoded.bytes();
     let output_artifact = ArtifactRef::from_bytes("image/vnd.adobe.photoshop", output_bytes)?;
     let output_byte_count = output_bytes.len();
@@ -99,10 +99,9 @@ pub(super) fn compile_layered_psd(request_path: PathBuf) -> PpResult<String> {
     let (request, _snapshot): (DocumentPsdCompileRequest, _) =
         read_json_request_snapshot(&request_path)?;
     if request.schema_version != 2 || request.operation != DOCUMENT_PSD_OPERATION {
-        return Err(PpError::InvalidRequest(
-            "document PSD request schemaVersion must be 2 and operation must be 'compile_document_psd'"
-                .to_string(),
-        ));
+        return Err(PpError::InvalidRequest(format!(
+            "document PSD request schemaVersion must be 2 and operation must be '{DOCUMENT_PSD_OPERATION}'"
+        )));
     }
     request.document.validate()?;
     if request.artifacts.len() > MAX_DOCUMENT_ARTIFACTS {
@@ -160,12 +159,16 @@ pub(super) fn compile_layered_psd(request_path: PathBuf) -> PpResult<String> {
         let bytes = read_bytes_limited(&path, MAX_RASTER_READ_BYTES)?;
         let observed = ArtifactRef::from_bytes(binding.artifact.media_type(), &bytes)?;
         if observed != binding.artifact {
-            return Err(PpError::InvalidRequest(format!(
-                "artifact '{}' bytes do not match declared ArtifactRef",
-                path.display()
-            )));
+            return Err(PpError::PreconditionFailed {
+                operation: DOCUMENT_PSD_OPERATION.to_string(),
+                cause: format!(
+                    "artifact '{}' bytes do not match declared ArtifactRef",
+                    path.display()
+                ),
+            });
         }
-        let decoded = ImageCodec::decode_rgba_bytes_with_metadata(&path, &bytes, Default::default())?;
+        let decoded =
+            ImageCodec::decode_rgba_bytes_with_metadata(&path, &bytes, Default::default())?;
         let decoded_pixel = decoded.pixel_spec().clone();
         let icc = decoded.icc_profile().map(<[u8]>::to_vec);
         let raster = decoded.into_raster();
@@ -230,9 +233,14 @@ pub(super) fn compile_layered_psd(request_path: PathBuf) -> PpResult<String> {
     let encoded = crate::adapters::psd::encode_layered_psd(&request.document, &resolved)?;
     let structure = crate::adapters::psd::inspect_layered_psd(encoded.bytes())?;
 
-    verify_guard(&request_path, &request_guard, "Document PSD request")?;
+    verify_guard(
+        &request_path,
+        &request_guard,
+        "Document PSD request",
+        DOCUMENT_PSD_OPERATION,
+    )?;
     for (path, guard) in &input_guards {
-        verify_guard(path, guard, "Document PSD artifact")?;
+        verify_guard(path, guard, "Document PSD artifact", DOCUMENT_PSD_OPERATION)?;
     }
 
     let output_artifact = ArtifactRef::from_bytes("image/vnd.adobe.photoshop", encoded.bytes())?;
@@ -248,7 +256,10 @@ pub(super) fn compile_layered_psd(request_path: PathBuf) -> PpResult<String> {
             output_artifact,
             operation_digest,
             bytes_written: u64::try_from(encoded.bytes().len()).map_err(|_| {
-                PpError::InvalidRequest("layered PSD byte count overflow".to_string())
+                PpError::ResourceLimit {
+                    operation: DOCUMENT_PSD_OPERATION.to_string(),
+                    cause: "layered PSD byte count overflow".to_string(),
+                }
             })?,
             merged_rgba_sha256: Sha256Digest::from_bytes(encoded.merged().pixels()),
             layer_records: encoded.layer_records(),
@@ -285,13 +296,17 @@ fn collect_document_artifacts(document: &Document) -> Vec<&ArtifactRef> {
     output
 }
 
-fn verify_guard(path: &Path, expected: &FilePrecondition, label: &str) -> PpResult<()> {
+fn verify_guard(
+    path: &Path,
+    expected: &FilePrecondition,
+    label: &str,
+    operation: &str,
+) -> PpResult<()> {
     let actual = FilePrecondition::capture(path)?;
     if &actual != expected {
-        return Err(PpError::InvalidRequestSource {
-            message: format!("{label} changed while operation was running"),
-            path: path.to_path_buf(),
-            original_error: "optimistic precondition failed".to_string(),
+        return Err(PpError::PreconditionFailed {
+            operation: operation.to_string(),
+            cause: format!("{label} changed while operation was running: {}", path.display()),
         });
     }
     Ok(())
