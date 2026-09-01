@@ -50,9 +50,9 @@ pub enum ArtifactSetConditionPhase {
 /// `validate -> durable stage -> durable backup -> precondition -> install ->
 /// verify -> durable terminal marker -> cleanup`
 ///
-/// Every mutation is descriptor-relative and no-follow. The `/2` journal schema
-/// and transaction names remain compatible with the previous publisher so a
-/// stale transaction can still be recovered after this clean break.
+/// Every mutation is descriptor-relative and no-follow. The `/2` journal schema,
+/// lock name, and transaction names intentionally remain compatible with the
+/// previous publisher so stale on-disk recovery state survives this clean break.
 pub struct AtomicArtifactSetWriter;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -128,7 +128,6 @@ struct BackupRecord {
 struct RecoveryPlan {
     root_existed: bool,
     writes: BTreeSet<PathBuf>,
-    removals: BTreeSet<PathBuf>,
     backups: BTreeMap<PathBuf, BackupRecord>,
     touched: Vec<PathBuf>,
 }
@@ -162,7 +161,8 @@ impl AtomicArtifactSetWriter {
         let root = prepare_root(root.as_ref())?;
         let _lock = acquire_lock(&root)?;
         recover_stale_transactions(&root)?;
-        let mut condition = |_root: &Path, _phase: ArtifactSetConditionPhase, _context: &()| Ok(());
+        let mut condition =
+            |_root: &Path, _phase: ArtifactSetConditionPhase, _context: &()| Ok(());
         publish_locked(&root, entries, removals, &(), &mut condition, false)
     }
 
@@ -282,12 +282,26 @@ where
 
     let root_existed = existing_directory(root)?;
     let transaction_dir = create_transaction_dir(root)?;
-    let mut transaction = Transaction::prepare(
+    let mut transaction = match Transaction::prepare(
         root.to_path_buf(),
-        transaction_dir,
+        transaction_dir.clone(),
         root_existed,
         plan,
-    )?;
+    ) {
+        Ok(transaction) => transaction,
+        Err(primary) => {
+            return match cleanup_transaction(&transaction_dir) {
+                Ok(()) => Err(primary),
+                Err(cleanup) => Err(transaction_error(
+                    root,
+                    TransactionState::RecoveryRequired,
+                    format!(
+                        "{primary}; failed to durably clean incomplete transaction: {cleanup}"
+                    ),
+                )),
+            }
+        }
+    };
 
     if let Err(error) = transaction.stage(entries) {
         return Err(transaction.abort_without_mutation(error));
@@ -467,7 +481,8 @@ impl Transaction {
     }
 
     fn record_install(&mut self) -> PpResult<TerminalMarkerOutcome> {
-        let outcome = write_terminal_marker(&self.transaction_dir, INSTALLED_MARKER, &self.journal)?;
+        let outcome =
+            write_terminal_marker(&self.transaction_dir, INSTALLED_MARKER, &self.journal)?;
         self.transition(TransactionEvent::InstallRecorded)?;
         Ok(outcome)
     }
@@ -635,7 +650,6 @@ impl Journal {
         Ok(RecoveryPlan {
             root_existed: self.root_existed,
             writes,
-            removals,
             backups,
             touched,
         })
@@ -1075,7 +1089,8 @@ fn remove_empty_parents(mut current: Option<&Path>, root: &Path) -> PpResult<()>
             break;
         }
         match capability::remove_directory(directory) {
-            Ok(()) | Err(ref source) if source.kind() == std::io::ErrorKind::NotFound => {}
+            Ok(()) => {}
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
             Err(source) if source.kind() == std::io::ErrorKind::DirectoryNotEmpty => break,
             Err(source) => return Err(file_error(directory, source)),
         }
