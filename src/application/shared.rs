@@ -30,7 +30,7 @@ pub struct ApplicationOutput {
 }
 
 impl ApplicationOutput {
-    fn from_text(text: String, exit_code: i32) -> Self {
+    pub(super) fn from_text(text: String, exit_code: i32) -> Self {
         Self {
             stdout: format!("{text}\n"),
             exit_code,
