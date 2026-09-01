@@ -1,469 +1,265 @@
-# Product Contract
-> **Status: current user-facing contract, 0.3.1.** This document records shipped public behavior; `perfectpixel schema`, the implementation, and tests are the executable source of truth if it ever drifts. Historical transition plans are non-normative and cannot authorize commands, APIs, routes, thresholds, reports, or publication.
+# PerfectPixel Product Contract
 
+> Status: current public contract for `perfectpixel` 0.3.1.
+> Runtime evidence that has not actually been produced on the target host is UNKNOWN.
 
-This document defines the public behavior of the local Rust CLI. Where it and the code
-disagree, the code and its tests win — see the [Verification Contract](#verification-contract)
-for the gate that keeps them together.
+PerfectPixel is a deterministic local image-asset compiler and verification engine. It accepts explicit local inputs, performs bounded deterministic domain work, optionally invokes pinned external Effects, verifies candidate artifacts, and publishes only accepted output.
 
-## Platform Contract
+The executable authority order is:
 
-`perfectpixel` is Rust `cfg(unix)` only. The crate emits a compile-time error for `not(unix)`, so
-Windows and every other non-Unix target fail compilation; no non-Unix runtime contract exists. The
-complete fmt, clippy, test, and runtime gate is verified on macOS arm64.
+```text
+runtime result > tests > implementation > configuration > documentation
+```
 
-## Product Boundary
+Documentation never authorizes behavior that is not reachable from the implementation.
 
-`perfectpixel schema` identifies the CLI with `role: "deterministic-asset-compiler"`.
-It finalizes AI-generated or authored local assets; image generation and model inference are
-outside this product. The machine-readable boundary is `modelInference: false` and
-`networkRequired: false`. Publication follows `publicationPolicy: "evaluate-before-publish"`:
-quality and format checks complete before an atomic file replacement becomes visible.
+## Platform
 
-The raster adapter advertises these stable evidence contracts under `assetAdapter`:
+The Rust crate is `cfg(unix)` only. Non-Unix targets fail at compilation. Apple Vision additionally requires a supported macOS Vision framework. KTX2 compilation requires a caller-supplied compatible `ktx` executable whose exact SHA-256 is declared in the request.
 
-- `inspectionSchema: "perfectpixel.asset-inspection/1"`;
-- `transformSchema: "perfectpixel.asset-transform/1"`; and
-- `digestEncoding: "sha256-lowercase-hex"`.
+## Canonical operation boundary
 
-The local `perfectpixel-mcp` binary is an adapter over this same application contract. It does
-not change any CLI command, stdout JSON, help text, or exit code. Its fixed-root typed stdio
-boundary is specified separately in [MCP_CONTRACT.md](MCP_CONTRACT.md).
+`Operation` and `OperationRegistry` own operation identity, risk, side-effect class, capabilities, and timeout metadata.
 
-## Public Commands
+```text
+CLI parser ──┐
+             ├── typed Operation -> implementation
+MCP DTO ─────┘
+```
 
-```txt
+`ApplicationRequest` is an MCP/programmatic transport DTO only. It converts directly to `Operation`; it does not reconstruct argv or enter the CLI parser.
+
+CLI and MCP inventories may differ. When an operation is exposed through both transports, both reach the same `Operation` implementation and neither transport may redefine success, retryability, publication, or domain validation.
+
+## Public CLI commands
+
+```text
 perfectpixel schema
 perfectpixel inspect <input.png|jpg|jpeg|webp>
-perfectpixel convert <input.png|jpg|jpeg|webp> --out <output.png|jpg|jpeg|webp> [--width <positive integer>] [--height <positive integer>] [--filter nearest|lanczos3] [--jpeg-quality <1..100>] [--background <#RRGGBB>]
-perfectpixel upscale <input.png|jpg|jpeg|webp> --out <output.png|jpg|jpeg|webp> --scale <integer >=2> [--filter nearest|lanczos3] [--jpeg-quality <1..100>] [--background <#RRGGBB>]
+perfectpixel convert <input> --out <output> [options]
+perfectpixel upscale <input> --out <output> --scale <integer>=2 [options]
 perfectpixel edit --request <edit-request.json>
 perfectpixel psd --request <psd-export-request.json>
+perfectpixel document-psd --request <document-psd-request.json>
 perfectpixel chroma-plan --request <chroma-plan-request.json>
 perfectpixel normalize --request <normalize-request.json> --out-dir <dir>
 perfectpixel bundle --request <sprite-request.json> --out-dir <dir>
-perfectpixel vector <input.png|jpg|jpeg|webp> --out <output.svg> [--preset auto|pixel-art|legacy-lossless|flat-icon|line-art|bounded-illustration] [--profile compact|motion-structure-ready] [--detail auto|1|2|3|4|5] [--min-quality <0..1>] [--max-quality-loss <0..1>] [--max-paths <positive integer>] [--policy <vector-policy.json>] [--report <evaluation.json>] [--diagnostics <dir>]
-perfectpixel vector-analyze <input.png|jpg|jpeg|webp> [--preset auto|pixel-art|legacy-lossless|flat-icon|line-art|bounded-illustration] [--profile compact|motion-structure-ready] [--policy <vector-policy.json>] [--report <analysis.json>]
+perfectpixel texture-compile --request <texture-request.json>
+perfectpixel vector <input> --out <output.svg> [options]
+perfectpixel vector-analyze <input> [options]
+perfectpixel vision-foreground-instances --request <vision-request.json>
 perfectpixel motion-scaffold <input.svg> --out-dir <dir>
 perfectpixel motion-build --request <motion-request.json> --out-dir <dir>
 ```
 
-## Raster Asset Adapter Contract
+`perfectpixel schema` is the machine-readable capability surface. `--help` is presentation only.
 
-`convert` and `upscale` are CLI adapters over the format-independent `Raster` transform core.
-They accept PNG, JPG, JPEG, and WebP inputs and select PNG, JPEG, or WebP output from the
-`--out` extension. They cannot produce SVG; `vector` is the sole raster-to-SVG quality-gated
-publication command. `motion-build` is separate: it may publish derived `animated.svg` from an
-accepted raster-free SVG source, but it does not convert raster input or grant vector publication
-authority.
+## Artifact and pixel contract
 
-`inspect` reads at most the bounded raster input limit once, decodes that exact byte vector, and
-prints `perfectpixel.asset-inspection/1`. Its success JSON adds `schema`, `ok`, `input`,
-`inputSha256`, and `inputByteCount` to the existing raster facts. `inputSha256` is the lowercase
-64-hex SHA-256 of the bytes that were decoded, and `inputByteCount` is their exact length.
+`ArtifactRef` identifies bytes by lowercase SHA-256 digest, media type, and byte count. A filesystem path is not artifact identity.
 
-`convert` changes only the file format when neither `--width` nor `--height` is supplied. With
-one dimension it preserves the input aspect ratio using nearest-integer rounding; with both it
-uses the requested exact rectangle. Its default resize filter is `lanczos3`. `upscale` requires
-an integer `--scale` of at least two and defaults to `nearest`, which preserves pixel-art source
-pixels exactly. Either command accepts `--filter nearest|lanczos3` when it changes dimensions.
-The output dimensions remain subject to the normal 8192-pixel-per-side and 8192²-pixel limits.
-Every `Raster` value has strictly positive width and height; zero-width or zero-height values are
-invalid at construction rather than being deferred to a resize or encoder panic.
+Current raster storage is RGBA8. `PixelSpec` explicitly records pixel format, alpha mode, and color semantics. Missing embedded color provenance remains `ColorSpec::Unknown`; it is never silently promoted to sRGB.
 
-PNG preserves RGBA. WebP output is lossless RGBA only. JPEG has no alpha channel: if any input
-pixel is transparent, the command fails until the caller supplies `--background #RRGGBB`. The
-adapter composites that matte in linear light, then encodes RGB JPEG. `--jpeg-quality` accepts
-1 through 100 and defaults to 85; it and `--background` are invalid for PNG or WebP output.
-All successful transforms use the single-file atomic writer and print a
-`perfectpixel.asset-transform/1` JSON summary. New bytes are written and synchronized in a
-same-directory temporary file before rename. Rename is the visible commit point: any failure before
-rename preserves the previous destination; if parent-directory synchronization fails after rename,
-the command returns an explicit I/O error stating that the replacement may already be visible. A
-failure to confirm directory durability is never converted to success. The asset adapter does not
-silently select lossy WebP, AI upscaling, or a generic SVG conversion route.
+Embedded ICC bytes are retained and bound to their digest. This dependency-minimal release does not embed an ICC conversion engine. A path requiring ICC conversion returns explicit `Unsupported` rather than silently changing color semantics. An unprofiled source may be accepted only when the request explicitly declares the color semantics required by that operation.
 
-## Image Edit Pipeline Contract
+## Verification contract
 
-`edit` is the stable local post-generation edit boundary. It reads one strict JSON request,
-applies a sequential bounded list of pure raster transforms, and atomically publishes one
-PNG. The request schema is `perfectpixel.image-edit/1` and rejects unknown fields:
+`VerificationSpec` is strict typed input and rejects vacuous verification. `VerificationReport` is machine-readable evidence.
 
-```json
-{
-  "schemaVersion": 1,
-  "operation": "edit",
-  "input": "source.png",
-  "output": "edited.png",
-  "steps": [
-    {"op": "crop", "x": 0, "y": 0, "width": 512, "height": 512},
-    {"op": "rotate", "quarterTurns": 1},
-    {"op": "flip", "axis": "horizontal"},
-    {"op": "resize", "width": 256, "height": 256, "filter": "lanczos3"},
-    {"op": "remove_background", "keys": [[255, 0, 255]], "tolerance": 8, "feather": 4},
-    {"op": "remove_background_auto", "maxKeys": 2, "minEdgeCoverageBasisPoints": 9500, "tolerance": 8, "feather": 4}
-  ]
-}
+Supported verification includes:
+
+- exact dimensions, `PixelSpec`, alpha bounds, artifact SHA-256, connected-component count, and content bounds;
+- exact RGBA and alpha assertions over explicit regions;
+- CIEDE2000 thresholds over complete or regional comparisons;
+- mask coverage/component/bounds invariants;
+- KTX2 structural and semantic assertions plus decode roundtrip;
+- vector SVG safety/topology/render-back/quality gates;
+- layered PSD structural readback against PerfectPixel-owned document semantics.
+
+A candidate that cannot be verified does not publish.
+
+## Raster operations
+
+`inspect` returns bounded numeric evidence over the exact source bytes it decoded.
+
+`convert` and `upscale` use deterministic raster transforms and explicit encoders. PNG/WebP preserve RGBA. JPEG transparency requires an explicit background matte. Resize/upscale dimensions are positive and bounded. Output/input collisions fail before publication.
+
+`edit` accepts a strict bounded JSON pipeline of deterministic operations: crop, quarter-turn rotation, horizontal/vertical flip, resize, exact keyed background removal, and deterministic edge-derived automatic background removal. It is not semantic segmentation, inpainting, outpainting, or generative editing.
+
+`chroma-plan` is a deterministic fixed-palette color decision. It performs no semantic vision.
+
+## PSD contracts
+
+### `psd`
+
+`psd` is the compatibility flattened PSD v1 surface. It preserves the bounded existing export contract and does not claim layered document semantics.
+
+### `document-psd`
+
+`document-psd` is the canonical layered path and maps to operation `document.compile_psd`.
+
+The strict request has `schemaVersion: 2`, `operation: "document.compile_psd"`, a `DocumentIR`, exact artifact bindings, and one `.psd` output path. Unknown fields fail.
+
+```text
+request snapshot
+-> DocumentIR validation
+-> content-addressed raster bindings
+-> explicit pixel/color validation
+-> PerfectPixel deterministic merged composite
+-> isolated PSD serialization
+-> structural readback
+-> request/input/output precondition check
+-> checked atomic publication
 ```
 
-`input` accepts PNG/JPG/JPEG/WebP and is resolved relative to the request file when it is not
-absolute. `output` must be a PNG and must not collide with the request or input. There must be
-1..=64 steps. Crop rectangles must be positive and contained in the current raster; rotation
-accepts clockwise quarter-turns 1, 2, or 3; flip accepts `horizontal` or `vertical`; resize
-requires positive dimensions and `nearest` or `lanczos3`. `remove_background` requires 1..=16
-unique RGB keys and byte-valued `tolerance` and `feather`. It performs a four-connected flood
-from unique canvas-edge pixels. A pixel is reachable only when its minimum Chebyshev RGB distance
-to a key is at most `tolerance + feather`; therefore a matching color isolated inside the subject
-is preserved. RGB bytes never change. For original alpha `a`, distance `d`, tolerance `t`, and
-feather `f`, output alpha is `0` when `d <= t`, is `a` when `f = 0` or `d >= t + f`, and otherwise
-is round-half-up `((a * (d - t)) + floor(f / 2)) / f`. Work is charged as
-`pixels * key_count + output_pixels` toward the same cumulative bound. Every intermediate raster
-remains within the normal 8192-per-side and 8192²-pixel decode bounds.
+`DocumentIR` owns layer/group/mask semantics. The PSD adapter owns byte encoding only. The adapter cannot replace PerfectPixel's merged appearance with an independently rendered success decision.
 
-`remove_background_auto` is the controlled variant for checkerboard, flat, or chroma-key-like
-edges. It requires `maxKeys` from 1 through 16, integer `minEdgeCoverageBasisPoints` from 1
-through 10000, and the same byte-valued `tolerance` and `feather`. It orders the complete edge
-palette by count descending then RGB lexicographic order, selects at most `maxKeys`, and invokes
-the exact four-connected keyed removal only when the selected colors' floor coverage in basis
-points meets the requested threshold. A coverage failure is explicit and happens before the
-output is published; the prior destination remains unchanged. This is intentionally fail-closed
-for heterogeneous photographic edges when their dominant colors cannot meet the threshold. It is
-not semantic segmentation, matting, inpainting, outpainting, masking, layering, or generative
-color intelligence.
+## Sprite contracts
 
-Success emits one strict JSON evidence object with schema, paths, dimensions, ordered operation
-names, and output SHA-256. When an auto step runs, `autoBackground` additionally records its
-bounded `selectedKeys` and integer `edgeCoverageBasisPoints` in execution order. The output bytes
-are committed through the same-directory atomic writer only after parsing, input snapshot, and all
-pure transforms succeed. Failure before the rename leaves an existing destination unchanged.
+`normalize` and `bundle` retain the existing deterministic sprite-generation workflow. Generated ownership is explicit and managed through `.perfectpixel-generation.json`; unowned files are not silently adopted or deleted.
 
-## PSD Export Contract
+Normalized/bundled sets publish through the recoverable artifact-set transaction boundary. A failed normalize gate may publish its explicit failure report but cannot leave a prior success set deceptively current.
 
-`psd` is a strict local export boundary for a flattened Photoshop document. It reads one
-PNG/JPG/JPEG/WebP raster and publishes one `.psd` through the same single-file atomic writer
-used by the raster adapter. The request schema is `perfectpixel.photoshop-export/1` and
-rejects unknown fields:
+## Texture contract
 
-```json
-{
-  "schemaVersion": 1,
-  "operation": "export_psd",
-  "input": "source.png",
-  "output": "source.psd",
-  "path": { "alphaThreshold": 128, "maxKnots": 8192 }
-}
+`texture-compile` maps to operation `texture.compile` and accepts one strict request:
+
+- `schemaVersion: 1`;
+- `operation: "texture.compile"`;
+- `generation` work identity;
+- input `path`, `ArtifactRef`, and `PixelSpec`;
+- output `.ktx2` path;
+- semantic `color_srgb`, `linear`, `normal_map`, or `mask`;
+- encoding `basis_lz` or `uastc`;
+- explicit mipmap policy;
+- pinned `ktx` executable path and SHA-256;
+- verification thresholds.
+
+`normal_map` requires UASTC. `color_srgb` uses explicit CIEDE2000 thresholds. Linear, normal-map, and mask semantics use explicit maximum absolute-channel error.
+
+The flow is:
+
+```text
+immutable input snapshot
+-> explicit pixel/color semantics
+-> canonical PNG carrier
+-> pinned KTX encode Effect
+-> current EffectIdentity check
+-> KTX2 structure/transfer/supercompression/mipmap verification
+-> pinned KTX extract Effect
+-> current EffectIdentity check
+-> decode roundtrip verification
+-> request/input/output precondition recheck
+-> atomic publication
 ```
 
-`input` and `output` are resolved relative to the request file when they are not absolute.
-The input must use a supported raster extension and the output must use `.psd`. The output
-must not collide with the request or input. Paths must not contain NUL, backslash, or `..`
-components, are bounded to 4096 bytes, and output is capped at 64 MiB.
-`path.alphaThreshold` is an integer from 1 through 255 and
-`path.maxKnots` is an integer from 1 through 32768; the recommended values are 128 and
-8192, respectively. Invalid, empty, or over-complex paths fail before publication and keep
-an existing destination byte-for-byte unchanged.
+External process exit success is only a candidate event.
 
-The PSD is version 1, 8-bit RGB, with four raw planar channels in R/G/B/A order. Every RGBA
-byte, including soft alpha, is preserved exactly; the document is deliberately flattened
-and contains no layer, PSB, CMYK, 16-bit, or generative claims. Alpha pixels at or above the
-threshold form hard-edge, closed contours. Four-connected foreground components and holes
-are retained, contours are sorted deterministically, and exactly collinear vertices are
-removed. The path fill rule is even/odd, and every knot is an unlinked selector-2 record
-with equal preceding control, anchor, and leaving control points. Coordinates are normalized
-to Photoshop's 8.24 fixed-point format with vertical components first.
+## Vector contract
 
-The image resources contain 8BIM IDs 1025 (`Working Path`) and 2000 (`Cutout Path`) with the
-same path data, plus ID 2999 naming `Cutout Path`, flatness 1.0 in 16.16 fixed point, and
-fill rule 1 (even/odd). The CLI emits one `perfectpixel.photoshop-export/1` evidence object
-with dimensions, channel/depth/mode facts, contour and knot counts, output byte count, and
-SHA-256. Photoshop-native opening and Paths-panel UI behavior are environment evidence, not
-claimed by the local implementation tests.
+`vector` is the sole raster-to-SVG publication command. The embedded content-addressed PerfectPixel vector authority owns route selection and acceptance.
 
-## Chroma Plan Contract
+A generated SVG must pass bounded SVG parsing, forbidden-resource checks, dimensions, resource limits, topology/protected-geometry checks, raster render-back, and configured quality gates before final publication. A rejected outcome cannot publish the requested final SVG.
 
-`chroma-plan` reads a strict request with schema `perfectpixel.chroma-plan/1`:
+`vector-analyze` is candidate-free analysis and cannot publish SVG.
 
-```json
-{
-  "schemaVersion": 1,
-  "operation": "chroma_plan",
-  "subjectRgbColors": [[255, 255, 255], [32, 32, 32]]
-}
+External VTracer is not part of this release. It may be added only when the verified route registry explicitly selects that backend and its candidate enters the same existing acceptance pipeline. Backend identity never grants approval.
+
+Detailed vector policy/report behavior remains in [vector documentation](vectorize/README.md).
+
+## Apple Vision contract
+
+The only Vision product operation in this release is `vision.apple.foreground_instances`, exposed by CLI as `vision-foreground-instances`.
+
+The strict request binds:
+
+- `schemaVersion: 1` and canonical operation name;
+- generation identity;
+- input path and exact `ArtifactRef`;
+- output directory;
+- pinned Swift helper executable path and SHA-256;
+- `requestRevision: 1`;
+- deterministic mask-cleanup parameters;
+- explicit mask verification bounds.
+
+The Apple helper is an Effect adapter, not success authority. It records provider, adapter version, OS version, Vision request type/revision, instance IDs, executable digest, argument digest, and process evidence.
+
+```text
+request/input snapshot
+-> EffectIdentity(generation, operationDigest, inputDigest)
+-> pinned Swift helper / Apple Vision
+-> EffectResult
+-> current identity check
+-> copy candidate masks into PerfectPixel-owned memory
+-> remove helper staging state
+-> deterministic Mask cleanup
+-> coverage/component/bounds verification
+-> request/input precondition recheck
+-> checked artifact-set publication
 ```
 
-`subjectRgbColors` must contain 1..=32 unique RGB triplets. The command compares every input
-color with the fixed eight-color high-saturation candidate palette using explicit sRGB-to-linear
-conversion followed by standard OKLab Euclidean distance. Each candidate's score is its minimum
-distance to a subject color; the candidate maximizing that score wins, with exact ties resolved
-by RGB lexicographic order. The strict response includes the selected RGB and `#RRGGBB` value,
-the metric/version, its `minDistance`, and all bounded candidate scores. This plan is a controlled
-chroma aid for subsequent keyed edits; it does not inspect semantics or claim arbitrary-photo
-background removal.
+Failed, cancelled, timed-out, stale, or unverified Vision results cannot acquire artifact authority.
 
-`inspect` emits strict `perfectpixel.asset-inspection/1` evidence with `schemaVersion: 1`, the SHA-256 of
-the exact bounded input bytes, dimensions/content geometry, `hasAlpha`, decoded `pixelFormat:
-"rgba8"`, `colorSpace: "srgb"`, and `edgePixelCount`. `edgePalette` contains at most 16 unique
-RGB entries sampled from the canvas perimeter (corners counted once), ordered by descending count
-then lexicographic RGB. It is deterministic numeric metadata intended to help an agent choose
-explicit background keys; it does not transmit image pixels or provide semantic vision.
-The transform summary keeps the existing fields and adds `inputSha256`, `inputByteCount`,
-`outputSha256`, and `outputByteCount`. The input fields describe the exact bounded bytes decoded
-for the transform. The output fields describe the exact encoded bytes passed to the atomic writer.
-No successful summary is emitted before that writer returns success; failed writes therefore cannot
-be reported as successful evidence.
+## Motion contract
 
+`motion-scaffold` and `motion-build` retain the existing deterministic raster-free SVG motion contract. See [MOTION_CONTRACT.md](MOTION_CONTRACT.md). Motion does not grant raster-to-SVG vector approval and does not claim bones/IK, semantic segmentation, path morphing, or packed `.lottie` output unless explicitly implemented by that contract.
 
-## Normalize Contract
+## External Effect contract
 
-`normalize` is a fully Rust pre-bundle stage. A request requires `character`, `cellWidth`,
-`cellHeight`, and ordered `states`. `sheetImage` is optional and defaults to
-`"sprite-sheet.png"`; `safeMarginX`, `safeMarginY`, `packing`, `chroma`, `fit`, and
-`quality` are also optional.
+An external Effect receives explicit immutable input and a bounded staging destination. Executables are pinned by SHA-256 and revalidated around process execution. Ambient environment is cleared; required environment values are explicit.
 
-`normalize-request.json` and every nested request object reject unknown fields. `fit.alignY`
-currently accepts only `bottom`; other vertical modes are rejected instead of being accepted as
-no-op configuration. All floating-point policy values must be finite. Non-negative quality and
-chroma thresholds are required; `fit.paletteSize` is 1 through 256,
-`chroma.unmixReach` is at most 32, and `chroma.spillMaxFraction` is from 0 through 1.
+Every completion returns one of:
 
-Each state uses exactly one source form:
-
-- `frames`: ordered PNG/JPG/JPEG/WebP frame paths relative to the request file; or
-- `strip` plus `frameCount`: one row/strip image that is split by alpha-connected components.
-
-Absolute paths, `..` traversal, NUL bytes, and backslash separators are invalid for all source paths. State names must be path-safe because they become `frames/<state>/frame-NN.png`. Normalize-state `fps` defaults to `8`, `loop` defaults to `true`, and `fps` must be from 1 through 1000.
-
-`normalize` writes only:
-
-- `normalize-report.json`;
-- `sprite-request.json` when all gates pass;
-- `frames/<state>/frame-NN.png` normalized RGBA frames when all gates pass.
-
-The generated `sprite-request.json` is bundle-compatible and is intended to be consumed by `perfectpixel bundle` without changing the bundle schema.
-
-The implemented normalization stages are deterministic and fully Rust:
-
-1. optional chroma hard-key erase;
-2. soft-alpha key/subject unmix for keyed edge blends;
-3. trapped-spill despill for small key-tinted interior clusters;
-4. alpha-connected component extraction and satellite filtering for strip sources;
-5. state-local scale conformance;
-6. upper-body overlap registration;
-7. baseline/ground placement;
-8. optional pixel-perfect pitch/phase detection, grid snap, dominant-block downscale, shared palette, and deterministic outline;
-9. quality report and gates.
-
-Quality gates reject success output when any state violates configured or default thresholds for sparse frames, chroma-adjacent residue, content-height variance, ground-line variance, or registration drift. On gate failure, `normalize-report.json` is still written with `ok:false`, but bundle-ready `sprite-request.json` and normalized frame outputs are not written.
-
-## Bundle Contract
-
-`bundle` accepts a JSON request with required `character`, `cellWidth`, `cellHeight`, and ordered
-`states`; `sheetImage` is optional and defaults to `"sprite-sheet.png"`, and `packing` is optional.
-The request, packing object, and every state reject unknown fields.
-
-Each state has a path-safe unique `name`, required `fps`, required `loop`, and ordered PNG/JPG/JPEG/WebP frame paths relative to the request file. Absolute paths, `..` traversal, NUL bytes, and backslash separators are invalid. `fps` must be from 1 through 1000.
-
-`cellWidth` and `cellHeight` define the logical source frame size. Input frames larger than this logical size are invalid. The atlas may store only a trimmed rectangle, but the manifest keeps the logical source size and trim offset.
-
-`packing` defaults to:
-
-```json
-{
-  "maxWidth": 2048,
-  "maxHeight": 2048,
-  "padding": 2,
-  "trim": true,
-  "allowRotation": false,
-  "multipack": true
-}
+```text
+Succeeded(candidate)
+Failed(error)
+Cancelled
 ```
 
-`sheetImage` must be a plain `.png` file name. It must not be `.`, `..`, a path, `manifest.json`, `sprite-sheet.json`, or `frames`.
+Timeout is an explicit failure category. Process Effects own a process group; cancellation and timeout terminate and reap the group before returning completion. `EffectIdentity` prevents stale results from changing current artifact state.
 
-`bundle` writes only:
+MCP cancellation is a separate transport boundary: cancelling an in-process MCP call does not force-stop an already executing synchronous publication worker. Its admission permit remains owned until that worker completes, preserving the existing MCP compatibility contract.
 
-- `manifest.json`;
-- one or more atlas PNG pages;
-- one Aseprite JSON file per atlas page;
-- `frames/<state>/frame-NN.png` copies of source frames.
+## Publication contract
 
-When one page is enough, the atlas page uses `sheetImage`. When multiple pages are needed, pages are named by adding `-00`, `-01`, ... before `.png`.
+A mutation follows the minimum complete sequence:
 
-Before writing, `bundle` rejects any generated output path that would overwrite the request file or a frame input file.
+```text
+capture destination/input preconditions
+-> compute candidate
+-> verify candidate
+-> recheck preconditions
+-> checked publication
+```
 
-Before writing generated files, `bundle` also rejects output paths whose parent
-components already exist as files or symlinks. This prevents partial bundles
-from being written when `frames/` or another artifact parent is blocked or points
-outside the intended output tree.
+Single-file outputs use the atomic file writer. Managed sets use the recoverable artifact-set publisher with lock, staging, backup evidence, journal, rollback/recovery, and final commit evidence.
 
-The generated-output commands capture every request and source as immutable bytes plus canonical
-path, filesystem revision, byte count, and SHA-256. Parsing, decoding, and domain computation use
-those exact bytes. Publication verifies the same evidence immediately before output mutation and
-again before the durable commit marker. An input change aborts before mutation or rolls the whole
-managed set back before commit.
+There is no generic force overwrite, silent fallback, implicit stale-file adoption, or success result emitted before publication returns success.
 
-After a successful write, each generated-output command records its owned files in
-`.perfectpixel-generation.json`. A later run replaces only that workflow generation and removes stale
-owned files that are no longer part of the current generation. Stale removal is allowed only after
-the existing file still matches the recorded byte count and SHA-256. Unrelated files are not
-cleanup targets. A corrupt authority, competing workflow authority, missing retained file,
-unowned current output, symlink, directory, or modified managed file causes fail-closed rejection.
-`motion-scaffold` invalidates any previous `motion-build` generation because the authored request
-must be rebuilt from the new scene.
+## Failure contract
 
-Publication acquires the output-root OS lock, recovers any interrupted transaction, resolves the
-current authority, stages every next managed byte, and snapshots every preexisting touched file.
-Journal schema `perfectpixel.artifact-set-transaction/2` records each such backup with a normalized
-relative `path`, exact `byteCount`, and lowercase SHA-256. The backup directory must contain exactly
-that file set. Marker reads bind the opened file handle to the observed path revision, and backup or
-restore tree enumeration is bounded by the artifact-count and normalized-path limits. A touched path
-omitted from `backups` is authoritative evidence that the path was absent at snapshot time.
+Failures preserve operation, cause, and relevant context. Invalid request, unsupported behavior, conflict/stale state, precondition failure, resource limit, timeout, cancellation, dependency failure, and verification failure remain distinguishable.
 
-The durable state machine records `backups-ready.json` before mutation, verifies product and target
-preconditions, installs new files and verified stale removals, synchronizes every affected directory
-including the output root's parent, verifies the complete next generation, and only then publishes
-`installed.json`. Unsupported or failed directory durability confirmation is an error, not a silent
-fallback. A pre-mutation condition failure records an abort without changing outputs. A post-mutation
-failure before the installed marker restores the previous set or leaves the immutable journal for the
-next recovery attempt.
+Retryability is explicit where the Effect boundary can determine it. A failure is not converted to success because cleanup, durability confirmation, or an optional backend is unavailable.
 
-The installed-marker rename is the terminal visible commit point. If that marker is visible but its
-transaction-directory sync fails, the writer must not start rollback: it reports that commit-marker
-durability is unconfirmed and retains the terminal transaction so the next locked publisher can
-resolve it. Once the installed marker is durably recorded, a later transaction-directory cleanup or
-parent-sync failure is also reported explicitly, but it cannot roll the committed generation back.
+## Deliberately absent from 0.3.1
 
-Before crash recovery changes any output, it must validate the complete journal and backup tree,
-durably copy every backup into a separate restore tree, verify that entire restore tree, and verify
-the immutable backup tree again. Recovery then processes each touched path once. Any validation,
-restaging, restoration, or cleanup failure is surfaced; recovery evidence that remains visible is
-kept for retry, and a terminal installed transaction is cleaned idempotently if it reappears after a
-crash. Unsupported schema `/1` is not automatically upgraded or replayed because it contains no
-historical backup integrity evidence; it fails closed for explicit operator resolution.
+The following roadmap candidates are not hidden partial features and are not part of this release:
 
-This transaction covers `normalize`, `bundle`, `motion-scaffold`, and `motion-build`. A root without
-`.perfectpixel-generation.json` does not auto-adopt existing generated outputs; use a clean output
-directory for first publication. There is no migration shim.
+- embedded ICC conversion engine;
+- SSIMULACRA2 dependency;
+- external VTracer route;
+- SAM/promptable segmentation;
+- ViTMatte/neural matting;
+- libvips large-image backend;
+- OCR, contour, feature-distance, or optical-flow Vision expansions;
+- OpenRaster backend.
 
-The publisher serializes cooperating writers and recovers interrupted work. It does not promise
-generation-atomic visibility to readers that do not participate in that lock: such readers may
-observe individual files while an installed set is being replaced.
+They require a concrete product need before adding a new Effect or abstraction boundary.
 
-## Atlas Manifest Contract
+## Verification contract
 
-`manifest.json` uses schema `perfectpixel.sprite/3`.
-
-The `sheets[]` array in `manifest.json` is the canonical source for atlas page dimensions and
-count. Bundle summaries expose the page count and manifest/files, without duplicating single-sheet
-dimension fields.
-
-It records:
-
-- packing settings;
-- all atlas pages;
-- animation entries;
-- per-frame atlas rectangle;
-- per-frame source size;
-- per-frame trim rectangle;
-- per-frame sheet index;
-- per-frame rotation flag;
-- original copied frame output path.
-
-This metadata must be enough to reconstruct the original logical frame from the packed atlas rectangle.
-
-## Vector Contract
-
-`Vectorizer` is the public Rust capability API. `Vectorizer::new()` verifies the embedded,
-content-addressed authority. `run(&Raster, &VectorRequest)` evaluates one generation request
-and returns `VectorOutcome::{Approved, Rejected}`. `analyze(&Raster, &VectorAnalysisRequest)`
-returns deterministic, candidate-free `VectorAnalysis`; it is exit-neutral and does not publish.
-
-`VectorRequest` accepts a preset, SVG profile, optional detail, minimum quality, maximum quality
-loss, maximum paths, `VectorPolicy`, and diagnostic intent. `VectorAnalysisRequest` accepts only
-preset, SVG profile, and policy. `VectorPolicy` is `perfectpixel.vector-policy/1`; it may constrain
-allowed/required paints and unmapped/noise handling, but contains no route, threshold, backend,
-digest, or approval authority. Its palette fields validate exact candidate paints; they do not map or
-merge similar source colors, and their length is not a requested output color count. Numeric
-generation controls may tighten embedded limits only.
-
-`perfectpixel vector` is the sole raster-to-SVG quality-gated publication command. It requires one
-PNG/JPG/JPEG/WebP input and `--out <output.svg>`; optional reports are JSON. `motion-build` may
-publish derived `animated.svg` from an accepted raster-free SVG source, but it is not a raster-to-SVG
-generator and does not grant vector publication authority. `perfectpixel vector-analyze` accepts exactly one
-raster input and only `--preset`, `--profile`, `--policy`, and `--report`. It cannot accept output,
-detail, quality, path-limit, or diagnostics options, and cannot create SVG or diagnostics. No old
-vector command or API aliases, wrappers, redirects, compatibility modules, or feature flags exist.
-
-The profile keys are `compact` → `perfectpixel.svg-editable/1` and
-`motion-structure-ready` → `perfectpixel.svg-motion-structure/1`. Generation validates extensions
-and collisions, captures one bounded source-file snapshot, decodes only those snapshot bytes, profiles
-content, normalizes request intent, resolves an embedded route, emits raster-free candidate bytes,
-validates shared bounded SVG IR, renders back, then applies all foundation and route gates. SVG
-containing image elements, image filters, data-image payloads, or base64 raster content is rejected.
-
-The embedded authority is immutable at runtime and verifies the route registry, foundation,
-threshold-bundle, profile, policy, and report identities. Foundation thresholds are universal and
-cannot be weakened. Promoted family routes additionally bind their locked, digest-bound corpus,
-bootstrap, family evidence, and family calibration bundle. `legacyActive` publishes under the
-distinct `THRESH-BOOT-001` foundation/legacy-compatibility bundle defined by
-[QUALITY_CONTRACT.md](vectorize/QUALITY_CONTRACT.md). Caller policies and reports cannot waive any
-phase gate.
-
-Generated authority binds the `perfectpixel.vector-evaluation/3` report schema identity. Promoted
-compact routes and `legacyActive` publish only through the verified embedded closure;
-motion-structure-ready routes remain `candidateShadow` and non-publishing.
-Continuous-tone input—photos, textures, complex gradients, or interior translucency—is unsupported
-and non-publishing. Ambiguous or unsupported input may require an explicit preset or be rejected;
-an explicit preset never waives a gate.
-
-A generation evaluation uses report schema `perfectpixel.vector-evaluation/3`; its `digests.report`
-is the embedded report-schema digest
-`sha256-962c423b7aa6e6de99010847b38943e3c0c9c9683e84d53ec264d9bb7152bcef`.
-The report and diagnostic artifacts are immutable evidence, not publication authority. CLI transaction
-truth is authoritative: only `VectorOutcome::Approved` atomically writes the requested SVG; a
-rejection writes no final SVG and never exposes candidate bytes in the result or report. Explicitly
-requested diagnostics may persist candidate evidence as non-publishing artifacts. Before each requested
-report, diagnostics directory, or final SVG write, the CLI rechecks the captured source's canonical
-path, filesystem revision, byte count, and SHA-256; a mismatch fails that transaction phase closed.
-The report's semantic `inputDigest` remains the digest of the decoded RGBA raster, not the raw source
-file bytes. Their directory is an exact managed **file set** published through the same OS lock, journal
-`perfectpixel.artifact-set-transaction/2`, rollback, and crash-recovery implementation as generated
-workflows. Files absent from the next diagnostic set and empty parents created solely by removed
-snapshot-owned files are removed transactionally. A zero-file diagnostic set still executes
-`BeforeMutation` and `BeforeCommit` guards around empty-root creation; if the final guard fails, a root
-created by that attempt is removed and its parent is synchronized. Existing standalone empty
-subdirectories, symlinks, special files, or a file↔directory path-shape conversion fail closed because
-the file-set journal does not invent directory-only ownership. A requested report records the
-evaluation outcome. Bounded
-adaptive illustration evidence publishes only through its verified promoted compact route; broader
-adaptive behavior remains unsupported and non-publishing.
-
-## Motion Contract
-
-`motion-scaffold` and `motion-build` follow
-[the versioned agent-authored motion contract](MOTION_CONTRACT.md). The compiler supports
-path-only SVG geometry, stable IDs, part groups, related-path suggestions, optional agent-authored
-paths, transform/opacity keyframes, markers, animated SVG, classic Lottie JSON, and an exploded
-dotLottie v2 layout. It does not claim semantic segmentation, path morphing, bones/IK, or a packed
-`.lottie` archive.
-
-## Failure Contract
-
-All command failures print JSON with `ok:false` and `message`.
-
-Exit codes:
-
-- `2`: invalid options or invalid requests;
-- `3`: file I/O, image decode, SVG render, oversized image, or image encode failure;
-- `4`: vector quality below the required score, unsupported continuous-tone vector content, or a
-  normalize quality gate failure;
-- `1`: other failures.
-
-The MCP adapter preserves these application exit codes inside its `exitCode` field and sets its
-envelope `ok` flag from the code only. Root, path, busy, and internal adapter errors use the MCP
-contract's stable error envelope; they do not reinterpret an existing CLI result message.
-
-## Verification Contract
+The target macOS checkout should run:
 
 ```bash
 cargo fmt --all -- --check
@@ -471,9 +267,10 @@ cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 cargo test --locked --workspace --all-targets --all-features
 ```
 
-These commands are the complete verification gate; there is no second toolchain and no
-packaging step. `tests/docs_contract.rs` is part of that suite and fails the gate when a
-documentation link breaks, when `perfectpixel schema` stops advertising exactly the commands
-the binary dispatches, or when a public command is untracked in
-[FUNCTION_MATRIX.md](FUNCTION_MATRIX.md) — so this document cannot silently drift from the
-implementation it describes.
+Environment-specific follow-up:
+
+- build/run the Apple Vision helper on the target macOS SDK;
+- execute a pinned `ktx` encode/extract roundtrip;
+- open/read back layered PSD with the desired independent/native application when native interoperability evidence is required.
+
+Anything not actually executed remains UNKNOWN, never an inferred PASS.

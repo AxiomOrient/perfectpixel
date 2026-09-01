@@ -22,6 +22,53 @@ pub enum PpError {
         path: PathBuf,
         original_error: String,
     },
+    #[error("unsupported during {operation}: {cause}")]
+    Unsupported {
+        operation: String,
+        cause: String,
+    },
+    #[error("not found during {operation}: {cause}")]
+    NotFound {
+        operation: String,
+        cause: String,
+    },
+    #[error("conflict during {operation}: {cause}")]
+    Conflict {
+        operation: String,
+        cause: String,
+    },
+    #[error("precondition failed during {operation}: {cause}")]
+    PreconditionFailed {
+        operation: String,
+        cause: String,
+    },
+    #[error("resource limit during {operation}: {cause}")]
+    ResourceLimit {
+        operation: String,
+        cause: String,
+    },
+    #[error("timeout during {operation}: {cause}")]
+    Timeout {
+        operation: String,
+        cause: String,
+    },
+    #[error("cancelled during {operation}: {cause}")]
+    Cancelled {
+        operation: String,
+        cause: String,
+    },
+    #[error("dependency '{dependency}' failed during {operation}: {cause}")]
+    DependencyFailed {
+        operation: String,
+        dependency: String,
+        cause: String,
+        retryable: bool,
+    },
+    #[error("verification failed during {operation}: {cause}")]
+    VerificationFailed {
+        operation: String,
+        cause: String,
+    },
     #[error("image decode failed for {path}: {message}")]
     ImageDecode { path: PathBuf, message: String },
     #[error("image encode failed: {message}")]

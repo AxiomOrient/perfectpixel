@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::{PpError, PpResult, Raster};
+use crate::{linear16_to_srgb8, srgb8_to_linear16, PpError, PpResult, Raster};
 use image::{
     codecs::{
         jpeg::JpegEncoder as ImageJpegEncoder, png::PngEncoder as ImagePngEncoder,
@@ -108,35 +108,22 @@ fn flatten_for_jpeg(image: &Raster, background: Option<[u8; 3]>) -> PpResult<Vec
     }
 
     let background = background.unwrap_or([0, 0, 0]);
+    let background_linear = background.map(srgb8_to_linear16);
     let mut rgb = Vec::with_capacity(image.pixels().len() / 4 * 3);
     for pixel in image.pixels().chunks_exact(4) {
-        let alpha = f64::from(pixel[3]) / 255.0;
+        let alpha = u32::from(pixel[3]) * 257;
+        let inverse_alpha = 65_535 - alpha;
         for channel in 0..3 {
-            let foreground = srgb_to_linear(pixel[channel]);
-            let back = srgb_to_linear(background[channel]);
-            rgb.push(linear_to_srgb(foreground * alpha + back * (1.0 - alpha)));
+            let foreground = u32::from(srgb8_to_linear16(pixel[channel]));
+            let back = u32::from(background_linear[channel]);
+            let mixed = ((u64::from(foreground) * u64::from(alpha)
+                + u64::from(back) * u64::from(inverse_alpha)
+                + 32_767)
+                / 65_535) as u16;
+            rgb.push(linear16_to_srgb8(mixed));
         }
     }
     Ok(rgb)
-}
-
-fn srgb_to_linear(value: u8) -> f64 {
-    let value = f64::from(value) / 255.0;
-    if value <= 0.04045 {
-        value / 12.92
-    } else {
-        ((value + 0.055) / 1.055).powf(2.4)
-    }
-}
-
-fn linear_to_srgb(value: f64) -> u8 {
-    let value = value.clamp(0.0, 1.0);
-    let value = if value <= 0.003_130_8 {
-        value * 12.92
-    } else {
-        1.055 * value.powf(1.0 / 2.4) - 0.055
-    };
-    (value * 255.0).round() as u8
 }
 
 fn encode_error(error: impl std::fmt::Display) -> PpError {
@@ -163,6 +150,15 @@ mod tests {
             ),
             Err(PpError::InvalidRequest(_))
         ));
+    }
+
+    #[test]
+    fn transparent_matte_is_integer_deterministic() {
+        let image = Raster::new(1, 1, vec![255, 0, 0, 128]).unwrap();
+        let first = flatten_for_jpeg(&image, Some([255, 255, 255])).unwrap();
+        let second = flatten_for_jpeg(&image, Some([255, 255, 255])).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first[0], 255);
     }
 
     #[test]

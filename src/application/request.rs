@@ -1,12 +1,23 @@
-use std::path::PathBuf;
+use std::{
+    num::{NonZeroU32, NonZeroUsize},
+    path::PathBuf,
+};
 
-/// A typed application command shared by the CLI and MCP adapters.
+use crate::{
+    parse_resample_filter, parse_vector_detail, parse_vector_preset, parse_vector_profile,
+    JpegQuality, Operation, PpError, PpResult, ScaleFactor, SvgProfile, UnitScore,
+    VectorPresetSelection,
+};
+
+use super::asset_codec::parse_background;
+
+/// MCP transport DTO retained for protocol compatibility. It is not a semantic authority.
+/// Conversion to the canonical `Operation` is pure and performs all transport-independent scalar
+/// validation exactly once; no argv strings are reconstructed and no file I/O occurs here.
 #[derive(Debug, Clone)]
 pub enum ApplicationRequest {
     Schema,
-    Inspect {
-        input: PathBuf,
-    },
+    Inspect { input: PathBuf },
     Convert {
         input: PathBuf,
         output: PathBuf,
@@ -24,14 +35,8 @@ pub enum ApplicationRequest {
         jpeg_quality: Option<u8>,
         background: Option<String>,
     },
-    Normalize {
-        request: PathBuf,
-        output_dir: PathBuf,
-    },
-    Bundle {
-        request: PathBuf,
-        output_dir: PathBuf,
-    },
+    Normalize { request: PathBuf, output_dir: PathBuf },
+    Bundle { request: PathBuf, output_dir: PathBuf },
     Vector {
         input: PathBuf,
         output: PathBuf,
@@ -52,154 +57,146 @@ pub enum ApplicationRequest {
         policy: Option<PathBuf>,
         report: Option<PathBuf>,
     },
-    MotionScaffold {
-        input: PathBuf,
-        output_dir: PathBuf,
-    },
-    MotionBuild {
-        request: PathBuf,
-        output_dir: PathBuf,
-    },
+    MotionScaffold { input: PathBuf, output_dir: PathBuf },
+    MotionBuild { request: PathBuf, output_dir: PathBuf },
 }
 
-impl ApplicationRequest {
-    pub(crate) fn into_cli_args(self) -> Vec<String> {
-        let mut args = Vec::new();
-        match self {
-            Self::Schema => args.push("schema".to_string()),
-            Self::Inspect { input } => args.extend(["inspect".to_string(), path_arg(input)]),
-            Self::Convert {
+impl TryFrom<ApplicationRequest> for Operation {
+    type Error = PpError;
+
+    fn try_from(request: ApplicationRequest) -> PpResult<Self> {
+        Ok(match request {
+            ApplicationRequest::Schema => Self::Schema,
+            ApplicationRequest::Inspect { input } => Self::Inspect { input },
+            ApplicationRequest::Convert { input, output, width, height, filter, jpeg_quality, background } => Self::Convert {
                 input,
                 output,
-                width,
-                height,
-                filter,
-                jpeg_quality,
-                background,
-            } => {
-                args.extend([
-                    "convert".to_string(),
-                    path_arg(input),
-                    "--out".to_string(),
-                    path_arg(output),
-                ]);
-                push_option(&mut args, "--width", width);
-                push_option(&mut args, "--height", height);
-                push_option(&mut args, "--filter", filter);
-                push_option(&mut args, "--jpeg-quality", jpeg_quality);
-                push_option(&mut args, "--background", background);
-            }
-            Self::Upscale {
+                width: optional_nonzero(width, "width")?,
+                height: optional_nonzero(height, "height")?,
+                filter: filter
+                    .as_deref()
+                    .map(parse_resample_filter)
+                    .transpose()
+                    .map_err(operation_input_error)?,
+                jpeg_quality: optional_jpeg_quality(jpeg_quality)?,
+                background: background.as_deref().map(parse_background).transpose()?,
+            },
+            ApplicationRequest::Upscale { input, output, scale, filter, jpeg_quality, background } => Self::Upscale {
                 input,
                 output,
-                scale,
-                filter,
-                jpeg_quality,
-                background,
-            } => {
-                args.extend([
-                    "upscale".to_string(),
-                    path_arg(input),
-                    "--out".to_string(),
-                    path_arg(output),
-                ]);
-                push_option(&mut args, "--scale", Some(scale));
-                push_option(&mut args, "--filter", filter);
-                push_option(&mut args, "--jpeg-quality", jpeg_quality);
-                push_option(&mut args, "--background", background);
-            }
-            Self::Normalize {
-                request,
-                output_dir,
-            } => args.extend([
-                "normalize".to_string(),
-                "--request".to_string(),
-                path_arg(request),
-                "--out-dir".to_string(),
-                path_arg(output_dir),
-            ]),
-            Self::Bundle {
-                request,
-                output_dir,
-            } => args.extend([
-                "bundle".to_string(),
-                "--request".to_string(),
-                path_arg(request),
-                "--out-dir".to_string(),
-                path_arg(output_dir),
-            ]),
-            Self::Vector {
+                scale: ScaleFactor::new(scale).map_err(operation_input_error)?,
+                filter: filter
+                    .as_deref()
+                    .map(parse_resample_filter)
+                    .transpose()
+                    .map_err(operation_input_error)?,
+                jpeg_quality: optional_jpeg_quality(jpeg_quality)?,
+                background: background.as_deref().map(parse_background).transpose()?,
+            },
+            ApplicationRequest::Normalize { request, output_dir } => Self::NormalizeSprite { request, output_dir },
+            ApplicationRequest::Bundle { request, output_dir } => Self::CompileSprite { request, output_dir },
+            ApplicationRequest::Vector {
+                input, output, preset, profile, detail, min_quality, max_quality_loss, max_paths,
+                policy, report, diagnostics,
+            } => Self::CompileVector {
                 input,
                 output,
-                preset,
-                profile,
-                detail,
-                min_quality,
-                max_quality_loss,
-                max_paths,
+                preset: preset
+                    .as_deref()
+                    .map(parse_vector_preset)
+                    .transpose()
+                    .map_err(operation_input_error)?
+                    .unwrap_or(VectorPresetSelection::Auto),
+                profile: profile
+                    .as_deref()
+                    .map(parse_vector_profile)
+                    .transpose()
+                    .map_err(operation_input_error)?
+                    .unwrap_or(SvgProfile::Compact),
+                detail: detail
+                    .map(|value| parse_vector_detail(&value.to_string()))
+                    .transpose()
+                    .map_err(operation_input_error)?
+                    .flatten(),
+                minimum_quality: min_quality
+                    .map(|value| UnitScore::new(value).map_err(|error| error.to_string()))
+                    .transpose()
+                    .map_err(PpError::InvalidOption)?,
+                maximum_quality_loss: max_quality_loss
+                    .map(|value| UnitScore::new(value).map_err(|error| error.to_string()))
+                    .transpose()
+                    .map_err(PpError::InvalidOption)?,
+                maximum_paths: max_paths
+                    .map(|value| NonZeroUsize::new(value).ok_or_else(|| PpError::InvalidOption("--max-paths must be a positive integer".to_string())))
+                    .transpose()?,
                 policy,
                 report,
                 diagnostics,
-            } => {
-                args.extend([
-                    "vector".to_string(),
-                    path_arg(input),
-                    "--out".to_string(),
-                    path_arg(output),
-                ]);
-                push_option(&mut args, "--preset", preset);
-                push_option(&mut args, "--profile", profile);
-                push_option(&mut args, "--detail", detail);
-                push_option(&mut args, "--min-quality", min_quality);
-                push_option(&mut args, "--max-quality-loss", max_quality_loss);
-                push_option(&mut args, "--max-paths", max_paths);
-                push_option(&mut args, "--policy", policy.map(path_arg));
-                push_option(&mut args, "--report", report.map(path_arg));
-                push_option(&mut args, "--diagnostics", diagnostics.map(path_arg));
-            }
-            Self::VectorAnalyze {
+            },
+            ApplicationRequest::VectorAnalyze { input, preset, profile, policy, report } => Self::AnalyzeVector {
                 input,
-                preset,
-                profile,
+                preset: preset
+                    .as_deref()
+                    .map(parse_vector_preset)
+                    .transpose()
+                    .map_err(operation_input_error)?
+                    .unwrap_or(VectorPresetSelection::Auto),
+                profile: profile
+                    .as_deref()
+                    .map(parse_vector_profile)
+                    .transpose()
+                    .map_err(operation_input_error)?
+                    .unwrap_or(SvgProfile::Compact),
                 policy,
                 report,
-            } => {
-                args.extend(["vector-analyze".to_string(), path_arg(input)]);
-                push_option(&mut args, "--preset", preset);
-                push_option(&mut args, "--profile", profile);
-                push_option(&mut args, "--policy", policy.map(path_arg));
-                push_option(&mut args, "--report", report.map(path_arg));
-            }
-            Self::MotionScaffold { input, output_dir } => args.extend([
-                "motion-scaffold".to_string(),
-                path_arg(input),
-                "--out-dir".to_string(),
-                path_arg(output_dir),
-            ]),
-            Self::MotionBuild {
-                request,
-                output_dir,
-            } => args.extend([
-                "motion-build".to_string(),
-                "--request".to_string(),
-                path_arg(request),
-                "--out-dir".to_string(),
-                path_arg(output_dir),
-            ]),
-        }
-        args
+            },
+            ApplicationRequest::MotionScaffold { input, output_dir } => Self::ScaffoldMotion { input, output_dir },
+            ApplicationRequest::MotionBuild { request, output_dir } => Self::CompileMotion { request, output_dir },
+        })
     }
 }
 
-fn path_arg(path: PathBuf) -> String {
-    path.into_os_string()
-        .into_string()
-        .expect("application paths must be valid UTF-8")
+fn optional_nonzero(value: Option<u32>, label: &str) -> PpResult<Option<NonZeroU32>> {
+    value
+        .map(|value| NonZeroU32::new(value).ok_or_else(|| PpError::InvalidOption(format!("{label} must be a positive integer"))))
+        .transpose()
 }
 
-fn push_option<T: ToString>(args: &mut Vec<String>, flag: &str, value: Option<T>) {
-    if let Some(value) = value {
-        args.push(flag.to_string());
-        args.push(value.to_string());
+fn optional_jpeg_quality(value: Option<u8>) -> PpResult<Option<JpegQuality>> {
+    value.map(JpegQuality::new).transpose().map_err(operation_input_error)
+}
+
+fn operation_input_error(error: impl std::fmt::Display) -> PpError {
+    PpError::InvalidOption(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ResampleFilter;
+
+    #[test]
+    fn transport_request_converts_without_argv_roundtrip() -> PpResult<()> {
+        let operation = Operation::try_from(ApplicationRequest::Convert {
+            input: "input.png".into(), output: "output.png".into(), width: Some(64), height: None,
+            filter: Some("nearest".to_string()), jpeg_quality: None, background: None,
+        })?;
+        match operation {
+            Operation::Convert { width, filter, .. } => {
+                assert_eq!(width.map(NonZeroU32::get), Some(64));
+                assert_eq!(filter, Some(ResampleFilter::Nearest));
+            }
+            _ => panic!("wrong operation"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn transport_request_rejects_invalid_scalar_state() {
+        let result = Operation::try_from(ApplicationRequest::Upscale {
+            input: "input.png".into(), output: "output.png".into(), scale: 1, filter: None,
+            jpeg_quality: None, background: None,
+        });
+        assert!(result.is_err());
     }
 }

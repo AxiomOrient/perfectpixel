@@ -20,6 +20,16 @@ impl Sha256Digest {
         Self(super::sha256::sha256_hex(bytes))
     }
 
+    pub fn from_digest_bytes(digest: [u8; 32]) -> Self {
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let mut value = String::with_capacity(64);
+        for byte in digest {
+            value.push(HEX[(byte >> 4) as usize] as char);
+            value.push(HEX[(byte & 0x0f) as usize] as char);
+        }
+        Self(value)
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -120,6 +130,12 @@ mod tests {
     #[test]
     fn digest_rejects_uppercase_hex() {
         assert!(Sha256Digest::parse("A".repeat(64)).is_err());
+    }
+
+    #[test]
+    fn digest_bytes_encode_without_rehashing() {
+        let digest = [0xabu8; 32];
+        assert_eq!(Sha256Digest::from_digest_bytes(digest).as_str(), "ab".repeat(32));
     }
 
     #[test]

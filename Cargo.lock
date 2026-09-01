@@ -513,6 +513,7 @@ dependencies = [
  "binpack2d",
  "fast_image_resize",
  "image",
+ "libc",
  "resvg",
  "rmcp",
  "roxmltree",

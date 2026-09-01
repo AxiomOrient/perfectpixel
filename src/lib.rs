@@ -6,7 +6,13 @@ mod adapters;
 #[cfg(unix)]
 mod core;
 #[cfg(unix)]
+mod effects;
+#[cfg(unix)]
 mod io;
+#[cfg(unix)]
+mod operation;
+#[cfg(unix)]
+mod runtime;
 #[cfg(unix)]
 mod vector;
 
@@ -43,15 +49,35 @@ pub use adapters::sprite::{
 pub use core::sha256::{is_sha256_hex, sha256, sha256_hex};
 #[cfg(unix)]
 pub use core::{
-    apply_raster_edits, apply_raster_edits_with_evidence, content_bbox, encode_psd, inspect_raster,
-    oklab_distance, plan_chroma, plan_remove_background_auto, resize_raster, verify_raster_exact,
-    AlphaMode, ArtifactRef, AutoBackgroundPlan, ChromaCandidateScore, ChromaPlan, ColorSpec,
-    EdgePaletteEntry, ExactAssertion, FrameRect, PixelFormat, PixelSpec, Point, PpError, PpResult,
-    PsdEncoded, PsdPathOptions, Raster, RasterEdit, RasterInspection, ResampleFilter, Sha256Digest,
-    Size, SvgContract, SvgReport, VerificationCheck, VerificationEvidence, VerificationReport,
-    VerificationSpec, CHROMA_CANDIDATE_PALETTE, CHROMA_PLAN_METRIC, CHROMA_PLAN_SCHEMA,
+    apply_raster_edits, apply_raster_edits_with_evidence, composite_source_over_linear_srgb,
+    content_bbox, decontaminate_known_background, delta_e2000, encode_psd, inspect_raster,
+    is_valid_premultiplied_rgba8, linear16_to_srgb8, oklab_distance, plan_chroma,
+    plan_remove_background_auto, premultiply_rgba8, resize_raster, srgb8_to_lab,
+    srgb8_to_linear16, transform_icc_rgba8_to_srgb, unpremultiply_rgba8, verify_raster,
+    verify_raster_exact, AlphaHistogram, AlphaMode, ArtifactRef, AutoBackgroundPlan, BlendMode,
+    CanvasSpec, ChromaCandidateScore, ChromaPlan, ColorSpec, ColorTransformReceipt,
+    ConnectedComponent, DeltaEThresholds, Document, EdgePaletteEntry, ExactAssertion, ExactCheck,
+    ExactEvidence, FrameRect, GroupLayer, Lab, Layer, LayerCommon, Mask, PerceptualAssertion,
+    PerceptualCheck, PerceptualEvidence, PixelFormat, PixelLayer, PixelSpec, Point, Point2, PpError,
+    PpResult, PsdEncoded, PsdPathOptions, Raster, RasterEdit, RasterInspection, Rect2,
+    RegionAssertion, RegionCheck, RegionEvidence, ResampleFilter, Sha256Digest, Size, SvgContract,
+    SvgReport, Transform3, VerificationProfile, VerificationReport, VerificationSpec,
+    CHROMA_CANDIDATE_PALETTE, CHROMA_PLAN_METRIC, CHROMA_PLAN_SCHEMA, DOCUMENT_SCHEMA,
     PSD_DEFAULT_ALPHA_THRESHOLD, PSD_DEFAULT_MAX_KNOTS, PSD_EXPORT_SCHEMA, PSD_MAX_DIMENSION,
     PSD_MAX_KNOTS, PSD_MAX_OUTPUT_BYTES, VERIFICATION_REPORT_SCHEMA,
+};
+#[cfg(unix)]
+pub(crate) use core::{
+    inspect_ktx2, verify_ktx2_contract, Ktx2Info, ResolvedDocumentRaster, TextureSemantic,
+};
+#[cfg(unix)]
+pub use effects::{
+    EffectCompletion, EffectFailure, EffectFailureCode, EffectIdentity, EffectResult,
+};
+#[cfg(unix)]
+pub(crate) use effects::{
+    run_ktx2_effect, run_ktx2_extract_effect, ExternalToolReceipt, Ktx2EffectRequest,
+    Ktx2ExtractRequest, KtxEncoding,
 };
 #[cfg(unix)]
 #[doc(hidden)]
@@ -62,8 +88,17 @@ pub use io::{
 };
 #[cfg(unix)]
 pub use io::{
-    AtomicDirectoryEntry, AtomicDirectoryWriter, AtomicFileWriter, DecodeLimits, ImageCodec,
-    PngEncoder,
+    AtomicDirectoryEntry, AtomicDirectoryWriter, AtomicFileWriter, DecodeLimits, DecodedRaster,
+    FilePrecondition, ImageCodec, PngEncoder,
+};
+#[cfg(unix)]
+pub(crate) use io::{publish_directory_checked, DirectoryPrecondition};
+#[cfg(unix)]
+pub use operation::{
+    operation_specs, parse_resample_filter, parse_unit_score, parse_vector_detail,
+    parse_vector_preset, parse_vector_profile, FailureContext, JpegQuality, Operation,
+    OperationErrorCode, OperationFailure, OperationInputError, OperationRisk, OperationSpec,
+    ScaleFactor, SideEffectClass,
 };
 #[cfg(unix)]
 pub use vector::{
