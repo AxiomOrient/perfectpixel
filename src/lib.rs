@@ -53,18 +53,18 @@ pub use core::{
     content_bbox, decontaminate_known_background, delta_e2000, encode_psd, inspect_raster,
     is_valid_premultiplied_rgba8, linear16_to_srgb8, oklab_distance, plan_chroma,
     plan_remove_background_auto, premultiply_rgba8, resize_raster, srgb8_to_lab,
-    srgb8_to_linear16, unpremultiply_rgba8, verify_raster, verify_raster_exact, AlphaHistogram,
-    AlphaMode, ArtifactRef, AutoBackgroundPlan, BlendMode, CanvasSpec, ChromaCandidateScore,
-    ChromaPlan, ColorSpec, ConnectedComponent, DeltaEThresholds, Document, EdgePaletteEntry,
-    ExactAssertion, ExactCheck, ExactEvidence, FrameRect, GroupLayer, Lab, Layer, LayerCommon, Mask,
-    PerceptualAssertion, PerceptualCheck, PerceptualEvidence, PixelFormat, PixelLayer, PixelSpec,
-    Point, Point2, PpError, PpResult, PsdEncoded, PsdPathOptions, Raster, RasterEdit,
-    RasterInspection, Rect2, RegionAssertion, RegionCheck, RegionEvidence, ResampleFilter,
-    Sha256Digest, Size, SvgContract, SvgReport, Transform3, VerificationProfile,
-    VerificationReport, VerificationSpec, CHROMA_CANDIDATE_PALETTE, CHROMA_PLAN_METRIC,
-    CHROMA_PLAN_SCHEMA, DOCUMENT_SCHEMA, PSD_DEFAULT_ALPHA_THRESHOLD, PSD_DEFAULT_MAX_KNOTS,
-    PSD_EXPORT_SCHEMA, PSD_MAX_DIMENSION, PSD_MAX_KNOTS, PSD_MAX_OUTPUT_BYTES,
-    VERIFICATION_REPORT_SCHEMA,
+    srgb8_to_linear16, transform_icc_rgba8_to_srgb, unpremultiply_rgba8, verify_raster,
+    verify_raster_exact, AlphaHistogram, AlphaMode, ArtifactRef, AutoBackgroundPlan, BlendMode,
+    CanvasSpec, ChromaCandidateScore, ChromaPlan, ColorSpec, ColorTransformReceipt,
+    ConnectedComponent, DeltaEThresholds, Document, EdgePaletteEntry, ExactAssertion, ExactCheck,
+    ExactEvidence, FrameRect, GroupLayer, Lab, Layer, LayerCommon, Mask, PerceptualAssertion,
+    PerceptualCheck, PerceptualEvidence, PixelFormat, PixelLayer, PixelSpec, Point, Point2, PpError,
+    PpResult, PsdEncoded, PsdPathOptions, Raster, RasterEdit, RasterInspection, Rect2,
+    RegionAssertion, RegionCheck, RegionEvidence, ResampleFilter, Sha256Digest, Size, SvgContract,
+    SvgReport, Transform3, VerificationProfile, VerificationReport, VerificationSpec,
+    CHROMA_CANDIDATE_PALETTE, CHROMA_PLAN_METRIC, CHROMA_PLAN_SCHEMA, DOCUMENT_SCHEMA,
+    PSD_DEFAULT_ALPHA_THRESHOLD, PSD_DEFAULT_MAX_KNOTS, PSD_EXPORT_SCHEMA, PSD_MAX_DIMENSION,
+    PSD_MAX_KNOTS, PSD_MAX_OUTPUT_BYTES, VERIFICATION_REPORT_SCHEMA,
 };
 #[cfg(unix)]
 pub use effects::{
@@ -80,7 +80,7 @@ pub use io::{
 #[cfg(unix)]
 pub use io::{
     AtomicDirectoryEntry, AtomicDirectoryWriter, AtomicFileWriter, DecodeLimits, DecodedRaster,
-    ImageCodec, PngEncoder,
+    FilePrecondition, ImageCodec, PngEncoder,
 };
 #[cfg(unix)]
 pub use operation::{
