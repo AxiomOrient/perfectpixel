@@ -39,6 +39,11 @@ pub struct OperationSpec {
 const CAP_NONE: &[&str] = &[];
 const CAP_READ: &[&str] = &["filesystem.read"];
 const CAP_PUBLISH: &[&str] = &["filesystem.read", "filesystem.publish"];
+const CAP_EXTERNAL_PUBLISH: &[&str] = &[
+    "filesystem.read",
+    "filesystem.publish",
+    "process.spawn",
+];
 
 const SCHEMA_SPEC: OperationSpec = spec(
     "system.schema",
@@ -82,7 +87,15 @@ const EDIT_SPEC: OperationSpec = spec(
 );
 const EXPORT_PSD_SPEC: OperationSpec = spec(
     "document.export_psd",
-    "Export the deterministic PSD contract",
+    "Export the compatibility flattened PSD contract",
+    SideEffectClass::Publish,
+    OperationRisk::LocalMutation,
+    None,
+    CAP_PUBLISH,
+);
+const COMPILE_DOCUMENT_PSD_SPEC: OperationSpec = spec(
+    "document.compile_psd",
+    "Compile DocumentIR to deterministic layered PSD",
     SideEffectClass::Publish,
     OperationRisk::LocalMutation,
     None,
@@ -112,6 +125,14 @@ const COMPILE_SPRITE_SPEC: OperationSpec = spec(
     None,
     CAP_PUBLISH,
 );
+const COMPILE_TEXTURE_SPEC: OperationSpec = spec(
+    "texture.compile",
+    "Compile and verify a KTX2 texture artifact",
+    SideEffectClass::ExternalProcess,
+    OperationRisk::ExternalExecution,
+    Some(Duration::from_secs(120)),
+    CAP_EXTERNAL_PUBLISH,
+);
 const COMPILE_VECTOR_SPEC: OperationSpec = spec(
     "vector.compile",
     "Compile a quality-gated SVG",
@@ -127,6 +148,14 @@ const ANALYZE_VECTOR_SPEC: OperationSpec = spec(
     OperationRisk::LocalRead,
     None,
     CAP_READ,
+);
+const APPLE_VISION_FOREGROUND_SPEC: OperationSpec = spec(
+    "vision.apple.foreground_instances",
+    "Generate Apple Vision foreground mask candidates and verify publication",
+    SideEffectClass::ExternalProcess,
+    OperationRisk::ExternalExecution,
+    Some(Duration::from_secs(120)),
+    CAP_EXTERNAL_PUBLISH,
 );
 const SCAFFOLD_MOTION_SPEC: OperationSpec = spec(
     "motion.scaffold",
@@ -152,17 +181,39 @@ const OPERATION_SPECS: &[OperationSpec] = &[
     UPSCALE_SPEC,
     EDIT_SPEC,
     EXPORT_PSD_SPEC,
+    COMPILE_DOCUMENT_PSD_SPEC,
     CHROMA_PLAN_SPEC,
     NORMALIZE_SPRITE_SPEC,
     COMPILE_SPRITE_SPEC,
+    COMPILE_TEXTURE_SPEC,
     COMPILE_VECTOR_SPEC,
     ANALYZE_VECTOR_SPEC,
+    APPLE_VISION_FOREGROUND_SPEC,
     SCAFFOLD_MOTION_SPEC,
     COMPILE_MOTION_SPEC,
 ];
 
+/// Single metadata/schema/risk authority. Transports may select an operation, but they do not own
+/// semantic policy independently of this registry.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OperationRegistry;
+
+impl OperationRegistry {
+    pub const fn global() -> Self {
+        Self
+    }
+
+    pub fn specs(self) -> &'static [OperationSpec] {
+        OPERATION_SPECS
+    }
+
+    pub fn find(self, name: &str) -> Option<OperationSpec> {
+        OPERATION_SPECS.iter().copied().find(|spec| spec.name == name)
+    }
+}
+
 pub fn operation_specs() -> &'static [OperationSpec] {
-    OPERATION_SPECS
+    OperationRegistry::global().specs()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -275,8 +326,8 @@ pub fn parse_unit_score(value: &str) -> Result<UnitScore, OperationInputError> {
 }
 
 /// Single semantic command authority shared by transports. Paths identify requested I/O but no
-/// file is read while constructing this state. Optional fields preserve whether the caller made an
-/// explicit choice when that presence itself changes validity (for example convert --filter).
+/// file is read while constructing this state. Request-driven external/document operations keep
+/// transport parsing thin; their strict schemas are parsed by the application handler once.
 pub enum Operation {
     Schema,
     Inspect {
@@ -305,6 +356,9 @@ pub enum Operation {
     ExportPsd {
         request: PathBuf,
     },
+    CompileDocumentPsd {
+        request: PathBuf,
+    },
     ChromaPlan {
         request: PathBuf,
     },
@@ -315,6 +369,9 @@ pub enum Operation {
     CompileSprite {
         request: PathBuf,
         output_dir: PathBuf,
+    },
+    CompileTexture {
+        request: PathBuf,
     },
     CompileVector {
         input: PathBuf,
@@ -336,6 +393,9 @@ pub enum Operation {
         policy: Option<PathBuf>,
         report: Option<PathBuf>,
     },
+    AppleVisionForegroundInstances {
+        request: PathBuf,
+    },
     ScaffoldMotion {
         input: PathBuf,
         output_dir: PathBuf,
@@ -355,11 +415,14 @@ impl Operation {
             Self::Upscale { .. } => UPSCALE_SPEC,
             Self::Edit { .. } => EDIT_SPEC,
             Self::ExportPsd { .. } => EXPORT_PSD_SPEC,
+            Self::CompileDocumentPsd { .. } => COMPILE_DOCUMENT_PSD_SPEC,
             Self::ChromaPlan { .. } => CHROMA_PLAN_SPEC,
             Self::NormalizeSprite { .. } => NORMALIZE_SPRITE_SPEC,
             Self::CompileSprite { .. } => COMPILE_SPRITE_SPEC,
+            Self::CompileTexture { .. } => COMPILE_TEXTURE_SPEC,
             Self::CompileVector { .. } => COMPILE_VECTOR_SPEC,
             Self::AnalyzeVector { .. } => ANALYZE_VECTOR_SPEC,
+            Self::AppleVisionForegroundInstances { .. } => APPLE_VISION_FOREGROUND_SPEC,
             Self::ScaffoldMotion { .. } => SCAFFOLD_MOTION_SPEC,
             Self::CompileMotion { .. } => COMPILE_MOTION_SPEC,
         }
@@ -420,6 +483,8 @@ pub struct FailureContext {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
 
     #[test]
@@ -432,6 +497,20 @@ mod tests {
     }
 
     #[test]
+    fn operation_registry_has_one_unique_owner() {
+        let registry = OperationRegistry::global();
+        let names = registry.specs().iter().map(|spec| spec.name).collect::<BTreeSet<_>>();
+        assert_eq!(names.len(), registry.specs().len());
+        assert_eq!(registry.specs().len(), 16);
+        assert_eq!(registry.find("document.compile_psd"), Some(COMPILE_DOCUMENT_PSD_SPEC));
+        assert_eq!(registry.find("texture.compile"), Some(COMPILE_TEXTURE_SPEC));
+        assert_eq!(
+            registry.find("vision.apple.foreground_instances"),
+            Some(APPLE_VISION_FOREGROUND_SPEC)
+        );
+    }
+
+    #[test]
     fn operation_metadata_has_one_owner() {
         let operation = Operation::Inspect {
             input: "a.png".into(),
@@ -441,7 +520,6 @@ mod tests {
         assert_eq!(spec.side_effect, SideEffectClass::Read);
         assert_eq!(spec.risk, OperationRisk::LocalRead);
         assert_eq!(spec.capabilities, &["filesystem.read"]);
-        assert_eq!(operation_specs().len(), 13);
         assert_eq!(operation_specs()[1], spec);
     }
 
