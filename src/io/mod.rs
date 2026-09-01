@@ -2,6 +2,7 @@ mod artifact_set;
 mod atomic;
 pub(crate) mod capability;
 mod codec;
+mod directory;
 mod parallel;
 mod png;
 
@@ -14,6 +15,7 @@ pub use atomic::{
     AtomicDirectoryEntry, AtomicDirectoryWriter, AtomicFileWriter, FilePrecondition,
 };
 pub use codec::*;
+pub use directory::{publish_directory_checked, DirectoryPrecondition};
 #[doc(hidden)]
 pub use parallel::{parallel_map, parallel_map_owned};
 pub use png::*;
