@@ -1,14 +1,26 @@
-use std::{path::{Component, Path, PathBuf}, time::Duration};
+use std::{
+    path::{Component, Path, PathBuf},
+    time::Duration,
+};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ArtifactRef, AtomicDirectoryEntry, DirectoryPrecondition, EffectCompletion, EffectIdentity, FilePrecondition, ImageCodec, Mask, PixelFormat, PngEncoder, PpError, PpResult, Raster, Sha256Digest};
-use crate::effects::{AppleVisionHelperReceipt, AppleVisionInstancesEffectRequest, ExternalToolReceipt, run_apple_vision_instances_effect};
+use crate::effects::{
+    run_apple_vision_instances_effect, AppleVisionHelperReceipt, AppleVisionInstancesEffectRequest,
+    ExternalToolReceipt,
+};
 use crate::runtime::{CancellationFlag, PinnedExecutable};
+use crate::{
+    ArtifactRef, AtomicDirectoryEntry, DirectoryPrecondition, EffectCompletion, EffectIdentity,
+    FilePrecondition, ImageCodec, Mask, PngEncoder, PpError, PpResult, Raster, Sha256Digest,
+};
 
 use super::super::{
     path::{reject_same_path, validate_file_extension, validate_raster_input_path},
-    shared::{effect_failure_to_error, read_bytes_limited, read_json_request_snapshot, serialize_json, MAX_RASTER_READ_BYTES},
+    shared::{
+        effect_failure_to_error, read_bytes_limited, read_json_request_snapshot, serialize_json,
+        MAX_RASTER_READ_BYTES,
+    },
 };
 
 const OPERATION: &str = "vision.apple.foreground_instances";
@@ -25,9 +37,14 @@ pub(super) fn foreground_instances(request_path: PathBuf) -> PpResult<String> {
 
     let base = request_path.parent().unwrap_or_else(|| Path::new("."));
     let input = resolve_path(base, &request.input.path, "Vision input")?;
-    let output_directory = resolve_path(base, &request.output_directory, "Vision output directory")?;
+    let output_directory =
+        resolve_path(base, &request.output_directory, "Vision output directory")?;
     validate_raster_input_path(&input)?;
-    reject_same_path(&request_path, &input, "Vision request and input must not collide")?;
+    reject_same_path(
+        &request_path,
+        &input,
+        "Vision request and input must not collide",
+    )?;
 
     let input_guard = FilePrecondition::capture(&input)?;
     let output_guard = DirectoryPrecondition::capture(&output_directory)?;
@@ -36,7 +53,10 @@ pub(super) fn foreground_instances(request_path: PathBuf) -> PpResult<String> {
     if observed_input != request.input.artifact {
         return Err(PpError::PreconditionFailed {
             operation: OPERATION.to_string(),
-            cause: format!("input bytes no longer match declared ArtifactRef for '{}'", input.display()),
+            cause: format!(
+                "input bytes no longer match declared ArtifactRef for '{}'",
+                input.display()
+            ),
         });
     }
     let source = ImageCodec::decode_rgba_bytes(&input, &input_bytes, Default::default())?;
@@ -56,7 +76,8 @@ pub(super) fn foreground_instances(request_path: PathBuf) -> PpResult<String> {
             operation: OPERATION.to_string(),
             cause: error.to_string(),
         })?;
-    let staging_directory = staging_directory(&output_directory, request.generation, &operation_digest)?;
+    let staging_directory =
+        staging_directory(&output_directory, request.generation, &operation_digest)?;
     ensure_absent(&staging_directory)?;
 
     let result = run_apple_vision_instances_effect(
@@ -92,29 +113,38 @@ pub(super) fn foreground_instances(request_path: PathBuf) -> PpResult<String> {
         Some(EffectCompletion::Succeeded { value }) => value,
     };
 
+    // The Effect result owns exact candidate bytes in memory. Remove all helper-owned filesystem
+    // state before deterministic domain verification begins, so every later `?` is leak-free.
+    cleanup_staging(&staging_directory)?;
+
     if candidates.instances.len() > MAX_INSTANCES {
-        cleanup_staging(&staging_directory)?;
         return Err(PpError::ResourceLimit {
             operation: OPERATION.to_string(),
-            cause: format!("Vision returned {} instances; maximum is {MAX_INSTANCES}", candidates.instances.len()),
+            cause: format!(
+                "Vision returned {} instances; maximum is {MAX_INSTANCES}",
+                candidates.instances.len()
+            ),
         });
     }
 
-    let mut published = Vec::with_capacity(candidates.instances.len());
+    let mut published = Vec::with_capacity(candidates.instances.len() + 1);
     let mut manifest_instances = Vec::with_capacity(candidates.instances.len());
     for candidate in &candidates.instances {
         let decoded = ImageCodec::decode_rgba_bytes(
-            &staging_directory.join(format!("mask-{:08}.png", candidate.id)),
+            PathBuf::from(format!("<vision-mask-{:08}.png>", candidate.id)),
             &candidate.bytes,
             Default::default(),
         )?;
         if decoded.width() != source.width() || decoded.height() != source.height() {
-            cleanup_staging(&staging_directory)?;
             return Err(PpError::VerificationFailed {
                 operation: OPERATION.to_string(),
                 cause: format!(
                     "instance {} mask dimensions {}x{} do not match input {}x{}",
-                    candidate.id, decoded.width(), decoded.height(), source.width(), source.height()
+                    candidate.id,
+                    decoded.width(),
+                    decoded.height(),
+                    source.width(),
+                    source.height()
                 ),
             });
         }
@@ -124,7 +154,11 @@ pub(super) fn foreground_instances(request_path: PathBuf) -> PpResult<String> {
         let candidate_mask = Mask::new(
             decoded.width(),
             decoded.height(),
-            decoded.pixels().chunks_exact(4).map(|pixel| pixel[0]).collect(),
+            decoded
+                .pixels()
+                .chunks_exact(4)
+                .map(|pixel| pixel[0])
+                .collect(),
         )?;
         let cleaned = cleanup_mask(candidate_mask, &request.cleanup)?;
         let verification = verify_mask(candidate.id, &cleaned, &request.verification)?;
@@ -136,11 +170,14 @@ pub(super) fn foreground_instances(request_path: PathBuf) -> PpResult<String> {
             id: candidate.id,
             file: file.clone(),
             candidate_artifact: candidate.artifact.clone(),
-            artifact: artifact.clone(),
+            artifact,
             bounds: verification.bounds,
             verification: verification.clone(),
         });
-        published.push(PublishedFile { path: PathBuf::from(file), bytes, artifact });
+        published.push(PublishedFile {
+            path: PathBuf::from(file),
+            bytes,
+        });
     }
 
     let manifest = VisionManifest {
@@ -164,11 +201,8 @@ pub(super) fn foreground_instances(request_path: PathBuf) -> PpResult<String> {
     published.push(PublishedFile {
         path: PathBuf::from("manifest.json"),
         bytes: manifest_bytes,
-        artifact: manifest_artifact.clone(),
     });
 
-    // Candidate artifacts and all helper filesystem state are gone before publication begins.
-    cleanup_staging(&staging_directory)?;
     verify_file_guard(&request_path, &request_guard, "Vision request")?;
     verify_file_guard(&input, &input_guard, "Vision input")?;
 
@@ -213,7 +247,11 @@ fn cleanup_mask(mut mask: Mask, cleanup: &VisionCleanup) -> PpResult<Mask> {
     Ok(mask)
 }
 
-fn verify_mask(id: u32, mask: &Mask, spec: &VisionVerification) -> PpResult<VisionMaskVerification> {
+fn verify_mask(
+    id: u32,
+    mask: &Mask,
+    spec: &VisionVerification,
+) -> PpResult<VisionMaskVerification> {
     let coverage = mask.coverage_basis_points(spec.alpha_threshold);
     let components = mask.connected_components(spec.alpha_threshold);
     let bounds = mask.bounding_box(spec.alpha_threshold);
@@ -258,10 +296,22 @@ fn verify_file_guard(path: &Path, expected: &FilePrecondition, label: &str) -> P
     Ok(())
 }
 
-fn staging_directory(output: &Path, generation: u64, digest: &Sha256Digest) -> PpResult<PathBuf> {
-    let parent = output.parent().ok_or_else(|| PpError::InvalidRequest("Vision output directory has no parent".to_string()))?;
-    let name = output.file_name().and_then(|value| value.to_str()).unwrap_or("vision");
-    Ok(parent.join(format!(".{name}.pp-{generation}-{}.vision-stage", &digest.as_str()[..12])))
+fn staging_directory(
+    output: &Path,
+    generation: u64,
+    digest: &Sha256Digest,
+) -> PpResult<PathBuf> {
+    let parent = output.parent().ok_or_else(|| {
+        PpError::InvalidRequest("Vision output directory has no parent".to_string())
+    })?;
+    let name = output
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("vision");
+    Ok(parent.join(format!(
+        ".{name}.pp-{generation}-{}.vision-stage",
+        &digest.as_str()[..12]
+    )))
 }
 
 fn ensure_absent(path: &Path) -> PpResult<()> {
@@ -271,7 +321,10 @@ fn ensure_absent(path: &Path) -> PpResult<()> {
             operation: OPERATION.to_string(),
             cause: format!("Vision staging path '{}' already exists", path.display()),
         }),
-        Err(error) => Err(PpError::FileIo { path: path.to_path_buf(), message: error.to_string() }),
+        Err(error) => Err(PpError::FileIo {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        }),
     }
 }
 
@@ -282,28 +335,52 @@ fn cleanup_staging(path: &Path) -> PpResult<()> {
         Err(error) => Err(PpError::DependencyFailed {
             operation: OPERATION.to_string(),
             dependency: "filesystem".to_string(),
-            cause: format!("failed to clean Vision staging directory '{}': {error}", path.display()),
+            cause: format!(
+                "failed to clean Vision staging directory '{}': {error}",
+                path.display()
+            ),
             retryable: false,
         }),
     }
 }
 
 fn resolve_path(base: &Path, value: &str, label: &str) -> PpResult<PathBuf> {
-    if value.is_empty() || value != value.trim() || value.contains('\0') || value.contains('\\') || value.len() > 4096 {
-        return Err(PpError::InvalidRequest(format!("{label} must be a bounded printable path")));
+    if value.is_empty()
+        || value != value.trim()
+        || value.contains('\0')
+        || value.contains('\\')
+        || value.len() > 4096
+    {
+        return Err(PpError::InvalidRequest(format!(
+            "{label} must be a bounded printable path"
+        )));
     }
     let path = Path::new(value);
-    if path.components().any(|component| matches!(component, Component::ParentDir)) {
-        return Err(PpError::InvalidRequest(format!("{label} must not contain '..'")));
+    if path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(PpError::InvalidRequest(format!(
+            "{label} must not contain '..'"
+        )));
     }
-    Ok(if path.is_absolute() { path.to_path_buf() } else { base.join(path) })
+    Ok(if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        base.join(path)
+    })
 }
 
 fn absolute(path: &Path) -> PpResult<PathBuf> {
-    if path.is_absolute() { return Ok(path.to_path_buf()); }
-    std::env::current_dir().map(|root| root.join(path)).map_err(|error| PpError::FileIo {
-        path: path.to_path_buf(), message: error.to_string(),
-    })
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    std::env::current_dir()
+        .map(|root| root.join(path))
+        .map_err(|error| PpError::FileIo {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -323,16 +400,24 @@ struct VisionRequest {
 impl VisionRequest {
     fn validate(&self) -> PpResult<()> {
         if self.schema_version != 1 || self.operation != OPERATION {
-            return Err(PpError::InvalidRequest(format!("Vision request schemaVersion must be 1 and operation must be '{OPERATION}'")));
+            return Err(PpError::InvalidRequest(format!(
+                "Vision request schemaVersion must be 1 and operation must be '{OPERATION}'"
+            )));
         }
         if self.request_revision != 1 {
-            return Err(PpError::Unsupported { operation: OPERATION.to_string(), cause: format!("requestRevision {} is unsupported", self.request_revision) });
+            return Err(PpError::Unsupported {
+                operation: OPERATION.to_string(),
+                cause: format!("requestRevision {} is unsupported", self.request_revision),
+            });
         }
-        if self.verification.minimum_coverage_basis_points > self.verification.maximum_coverage_basis_points
+        if self.verification.minimum_coverage_basis_points
+            > self.verification.maximum_coverage_basis_points
             || self.verification.maximum_coverage_basis_points > 10_000
             || self.verification.maximum_components == 0
         {
-            return Err(PpError::InvalidRequest("Vision verification bounds are invalid".to_string()));
+            return Err(PpError::InvalidRequest(
+                "Vision verification bounds are invalid".to_string(),
+            ));
         }
         Ok(())
     }
@@ -340,11 +425,17 @@ impl VisionRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct VisionInput { path: String, artifact: ArtifactRef }
+struct VisionInput {
+    path: String,
+    artifact: ArtifactRef,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct PinnedTool { path: PathBuf, sha256: Sha256Digest }
+struct PinnedTool {
+    path: PathBuf,
+    sha256: Sha256Digest,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -418,6 +509,4 @@ struct VisionResponse {
 struct PublishedFile {
     path: PathBuf,
     bytes: Vec<u8>,
-    #[allow(dead_code)]
-    artifact: ArtifactRef,
 }
