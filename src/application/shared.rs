@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{
-    AtomicArtifactSetWriter, FailureContext, ImageCodec, OperationErrorCode, OperationFailure,
-    PpError, PpResult, Raster,
+    AtomicArtifactSetWriter, EffectFailure, EffectFailureCode, FailureContext, ImageCodec,
+    OperationErrorCode, OperationFailure, PpError, PpResult, Raster,
 };
 
 use super::{
@@ -69,10 +69,12 @@ pub(super) fn render_result(
 pub(super) fn operation_phase(name: &str) -> &'static str {
     match name {
         "image.inspect" | "image.convert" | "image.upscale" | "image.edit" | "image.chroma_plan" => "asset",
-        "document.export_psd" => "psd",
+        "document.export_psd" | "document.compile_psd" => "document",
         "sprite.normalize" | "sprite.compile" => "sprite",
-        "vector.compile" => "vector",
+        "texture.compile" => "texture",
+        "vector.compile" | "vector.compile_vtracer" => "vector",
         "vector.analyze" => "vectorAnalyze",
+        "vision.apple.foreground_instances" => "vision",
         "motion.scaffold" | "motion.compile" => "motion",
         _ => "application",
     }
@@ -95,12 +97,32 @@ fn operation_failure(
             value: path.to_string(),
         });
     }
+    if let PpError::DependencyFailed { dependency, .. } = error {
+        context.push(FailureContext {
+            key: "dependency".to_string(),
+            value: dependency.clone(),
+        });
+    }
     OperationFailure {
         code: operation_error_code(error),
-        operation: operation.to_string(),
+        operation: semantic_operation(error).unwrap_or(operation).to_string(),
         cause: cause.to_string(),
         context,
-        retryable: false,
+        retryable: matches!(error, PpError::DependencyFailed { retryable: true, .. }),
+    }
+}
+
+fn semantic_operation(error: &PpError) -> Option<&str> {
+    match error {
+        PpError::NotFound { operation, .. }
+        | PpError::Conflict { operation, .. }
+        | PpError::PreconditionFailed { operation, .. }
+        | PpError::ResourceLimit { operation, .. }
+        | PpError::Timeout { operation, .. }
+        | PpError::Cancelled { operation, .. }
+        | PpError::DependencyFailed { operation, .. }
+        | PpError::VerificationFailed { operation, .. } => Some(operation.as_str()),
+        _ => None,
     }
 }
 
@@ -111,11 +133,17 @@ fn operation_error_code(error: &PpError) -> OperationErrorCode {
         | PpError::InvalidRequest(_)
         | PpError::InvalidRequestSource { .. }
         | PpError::SvgContract(_) => OperationErrorCode::InvalidArgument,
-        PpError::ImageTooLarge { .. } => OperationErrorCode::ResourceLimit,
+        PpError::NotFound { .. } => OperationErrorCode::NotFound,
+        PpError::Conflict { .. } => OperationErrorCode::Conflict,
+        PpError::PreconditionFailed { .. } => OperationErrorCode::PreconditionFailed,
+        PpError::ResourceLimit { .. } | PpError::ImageTooLarge { .. } => OperationErrorCode::ResourceLimit,
+        PpError::Timeout { .. } => OperationErrorCode::Timeout,
+        PpError::Cancelled { .. } => OperationErrorCode::Cancelled,
+        PpError::DependencyFailed { .. } => OperationErrorCode::DependencyFailed,
+        PpError::VerificationFailed { .. }
+        | PpError::VectorQuality { .. }
+        | PpError::QualityGate { .. } => OperationErrorCode::VerificationFailed,
         PpError::UnsupportedVectorContent(_) => OperationErrorCode::Unsupported,
-        PpError::VectorQuality { .. } | PpError::QualityGate { .. } => {
-            OperationErrorCode::VerificationFailed
-        }
         PpError::FileIo { .. }
         | PpError::ImageDecode { .. }
         | PpError::ImageEncode { .. }
@@ -136,6 +164,14 @@ fn error_message(error: &PpError) -> String {
         PpError::InvalidOption(message) | PpError::InvalidRequest(message) => message.clone(),
         PpError::InvalidOptionSource { message, .. }
         | PpError::InvalidRequestSource { message, .. } => message.clone(),
+        PpError::NotFound { cause, .. }
+        | PpError::Conflict { cause, .. }
+        | PpError::PreconditionFailed { cause, .. }
+        | PpError::ResourceLimit { cause, .. }
+        | PpError::Timeout { cause, .. }
+        | PpError::Cancelled { cause, .. }
+        | PpError::DependencyFailed { cause, .. }
+        | PpError::VerificationFailed { cause, .. } => cause.clone(),
         _ => error.to_string(),
     }
 }
@@ -144,6 +180,14 @@ pub(super) fn original_error(error: &PpError) -> String {
     match error {
         PpError::InvalidOptionSource { original_error, .. }
         | PpError::InvalidRequestSource { original_error, .. } => original_error.clone(),
+        PpError::NotFound { cause, .. }
+        | PpError::Conflict { cause, .. }
+        | PpError::PreconditionFailed { cause, .. }
+        | PpError::ResourceLimit { cause, .. }
+        | PpError::Timeout { cause, .. }
+        | PpError::Cancelled { cause, .. }
+        | PpError::DependencyFailed { cause, .. }
+        | PpError::VerificationFailed { cause, .. } => cause.clone(),
         _ => error.to_string(),
     }
 }
@@ -176,13 +220,67 @@ fn exit_code(error: &PpError) -> i32 {
         | PpError::ImageEncode { .. }
         | PpError::ImageTooLarge { .. }
         | PpError::SvgRender(_)
-        | PpError::Json { .. } => 3,
+        | PpError::Json { .. }
+        | PpError::NotFound { .. }
+        | PpError::DependencyFailed { .. }
+        | PpError::Timeout { .. } => 3,
         PpError::VectorRejected { .. }
         | PpError::VectorQuality { .. }
         | PpError::QualityGate { .. }
+        | PpError::VerificationFailed { .. }
         | PpError::UnsupportedVectorContent(_) => 4,
+        PpError::Conflict { .. }
+        | PpError::PreconditionFailed { .. }
+        | PpError::Cancelled { .. }
+        | PpError::ResourceLimit { .. } => 5,
         PpError::CliTransactionFailed { exit_code, .. } => *exit_code,
         _ => 1,
+    }
+}
+
+pub(super) fn effect_failure_to_error(failure: EffectFailure) -> PpError {
+    match failure.code {
+        EffectFailureCode::InvalidArgument => PpError::InvalidRequest(format!(
+            "{}: {}",
+            failure.operation, failure.cause
+        )),
+        EffectFailureCode::Unsupported => PpError::UnsupportedVectorContent(failure.cause),
+        EffectFailureCode::NotFound => PpError::NotFound {
+            operation: failure.operation,
+            cause: failure.cause,
+        },
+        EffectFailureCode::Conflict => PpError::Conflict {
+            operation: failure.operation,
+            cause: failure.cause,
+        },
+        EffectFailureCode::PreconditionFailed => PpError::PreconditionFailed {
+            operation: failure.operation,
+            cause: failure.cause,
+        },
+        EffectFailureCode::ResourceLimit => PpError::ResourceLimit {
+            operation: failure.operation,
+            cause: failure.cause,
+        },
+        EffectFailureCode::Timeout => PpError::Timeout {
+            operation: failure.operation,
+            cause: failure.cause,
+        },
+        EffectFailureCode::DependencyFailed => PpError::DependencyFailed {
+            operation: failure.operation,
+            dependency: failure.dependency,
+            cause: failure.cause,
+            retryable: failure.retryable,
+        },
+        EffectFailureCode::VerificationFailed => PpError::VerificationFailed {
+            operation: failure.operation,
+            cause: failure.cause,
+        },
+        EffectFailureCode::Internal => PpError::DependencyFailed {
+            operation: failure.operation,
+            dependency: failure.dependency,
+            cause: failure.cause,
+            retryable: false,
+        },
     }
 }
 
