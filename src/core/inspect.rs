@@ -19,8 +19,6 @@ pub struct RasterInspection {
     pub has_alpha: bool,
     /// Stable decoded pixel representation used by all inspection math.
     pub pixel_format: &'static str,
-    /// Stable color-space interpretation used by the raster adapter.
-    pub color_space: &'static str,
     /// Number of unique canvas-edge coordinates sampled exactly once.
     pub edge_pixel_count: u64,
     /// At most sixteen edge RGB colors, ordered by count descending then RGB.
@@ -34,6 +32,8 @@ pub struct EdgePaletteEntry {
     pub count: u64,
 }
 
+/// Geometry/alpha inspection over decoded RGBA pixels only.
+/// Color provenance is intentionally not inferred here because `Raster` does not own it.
 pub fn inspect_raster(image: &Raster) -> RasterInspection {
     let foreground_pixels = image
         .pixels()
@@ -61,7 +61,6 @@ pub fn inspect_raster(image: &Raster) -> RasterInspection {
             .chunks_exact(4)
             .any(|rgba| rgba[3] != u8::MAX),
         pixel_format: "rgba8",
-        color_space: "srgb",
         edge_pixel_count,
         edge_palette,
         content_box,
