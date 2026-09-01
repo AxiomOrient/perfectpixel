@@ -22,6 +22,11 @@ pub enum PpError {
         path: PathBuf,
         original_error: String,
     },
+    #[error("unsupported during {operation}: {cause}")]
+    Unsupported {
+        operation: String,
+        cause: String,
+    },
     #[error("not found during {operation}: {cause}")]
     NotFound {
         operation: String,
