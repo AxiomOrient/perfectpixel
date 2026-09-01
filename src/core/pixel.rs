@@ -44,6 +44,17 @@ impl PixelSpec {
     }
 }
 
+/// Parses the one transport-neutral textual RGB literal accepted by PerfectPixel.
+/// The returned bytes are explicitly sRGB8 channel codes; no color-space inference occurs.
+pub fn parse_srgb8_hex(raw: &str) -> Option<[u8; 3]> {
+    let hex = raw.strip_prefix('#')?;
+    if hex.len() != 6 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    let channel = |range| u8::from_str_radix(&hex[range], 16).ok();
+    Some([channel(0..2)?, channel(2..4)?, channel(4..6)?])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -54,5 +65,13 @@ mod tests {
         assert_eq!(spec.pixel_format, PixelFormat::Rgba8);
         assert_eq!(spec.alpha, AlphaMode::Straight);
         assert_eq!(spec.color, ColorSpec::Unknown);
+    }
+
+    #[test]
+    fn srgb8_hex_parser_is_strict_and_case_insensitive() {
+        assert_eq!(parse_srgb8_hex("#00aAFF"), Some([0, 170, 255]));
+        assert_eq!(parse_srgb8_hex("00aaff"), None);
+        assert_eq!(parse_srgb8_hex("#fff"), None);
+        assert_eq!(parse_srgb8_hex("#zz0000"), None);
     }
 }
