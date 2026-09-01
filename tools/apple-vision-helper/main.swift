@@ -11,6 +11,8 @@ private enum HelperError: Error, CustomStringConvertible {
     case noObservation
     case noInstances
     case writeFailed(String)
+    case receiptExists(String)
+    case receiptWriteFailed(String)
 
     var description: String {
         switch self {
@@ -20,6 +22,8 @@ private enum HelperError: Error, CustomStringConvertible {
         case .noObservation: return "Vision returned no foreground mask observation"
         case .noInstances: return "Vision returned no foreground instances"
         case .writeFailed(let path): return "failed to write mask PNG: \(path)"
+        case .receiptExists(let path): return "Vision receipt path already exists: \(path)"
+        case .receiptWriteFailed(let path): return "failed to write Vision receipt: \(path)"
         }
     }
 }
@@ -65,6 +69,10 @@ private func foregroundMask(_ arguments: Arguments) throws {
     }
     let inputURL = URL(fileURLWithPath: arguments.input)
     let outputURL = URL(fileURLWithPath: arguments.output)
+    let receiptURL = URL(fileURLWithPath: arguments.output + ".receipt.json")
+    guard !FileManager.default.fileExists(atPath: receiptURL.path) else {
+        throw HelperError.receiptExists(receiptURL.path)
+    }
     guard let image = CIImage(contentsOf: inputURL) else {
         throw HelperError.loadFailed(arguments.input)
     }
@@ -102,17 +110,21 @@ private func foregroundMask(_ arguments: Arguments) throws {
 
     let version = ProcessInfo.processInfo.operatingSystemVersion
     let receipt: [String: Any] = [
-        "ok": true,
-        "backend": "AppleVision.VNGenerateForegroundInstanceMaskRequest",
-        "revision": arguments.revision,
-        "os": [
-            "major": version.majorVersion,
-            "minor": version.minorVersion,
-            "patch": version.patchVersion,
-        ],
+        "schema": "perfectpixel.apple-vision-helper-receipt/1",
+        "provider": "apple_vision",
+        "adapterVersion": "1",
+        "requestType": "VNGenerateForegroundInstanceMaskRequest",
+        "requestRevision": arguments.revision,
+        "osVersion": "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)",
         "instances": observation.allInstances.count,
     ]
     let data = try JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys])
+    do {
+        try data.write(to: receiptURL, options: [.atomic])
+    } catch {
+        try? FileManager.default.removeItem(at: outputURL)
+        throw HelperError.receiptWriteFailed(receiptURL.path)
+    }
     FileHandle.standardOutput.write(data)
     FileHandle.standardOutput.write(Data([0x0A]))
 }
