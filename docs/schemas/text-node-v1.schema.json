@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://perfectpixel.local/schemas/text-node-v1.schema.json",
+  "title": "PerfectPixel deterministic TextNode",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "content",
+    "direction",
+    "language",
+    "boxWidth",
+    "boxHeight",
+    "alignment",
+    "lineBreak",
+    "fontSize",
+    "color",
+    "pixelSpec",
+    "fontBytes",
+    "fontSha256"
+  ],
+  "properties": {
+    "content": {"type": "string", "minLength": 1, "maxLength": 65536},
+    "direction": {"enum": ["ltr", "rtl"]},
+    "language": {"type": "string", "pattern": "^[A-Za-z0-9-]{1,35}$"},
+    "boxWidth": {"type": "integer", "minimum": 1, "maximum": 8192},
+    "boxHeight": {"type": "integer", "minimum": 1, "maximum": 8192},
+    "alignment": {"enum": ["start", "center", "end"]},
+    "lineBreak": {"enum": ["no_wrap", "word_wrap"]},
+    "fontSize": {"type": "number", "minimum": 0.1, "maximum": 1024},
+    "color": {
+      "type": "array",
+      "prefixItems": [
+        {"type": "integer", "minimum": 0, "maximum": 255},
+        {"type": "integer", "minimum": 0, "maximum": 255},
+        {"type": "integer", "minimum": 0, "maximum": 255},
+        {"type": "integer", "minimum": 0, "maximum": 255}
+      ],
+      "items": false
+    },
+    "pixelSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "colorSpace", "alphaMode"],
+      "properties": {
+        "format": {"const": "rgba8"},
+        "colorSpace": {"const": "srgb"},
+        "alphaMode": {"const": "straight"}
+      }
+    },
+    "fontBytes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 33554432,
+      "items": {"type": "integer", "minimum": 0, "maximum": 255}
+    },
+    "fontSha256": {"type": "string", "pattern": "^[0-9A-Fa-f]{64}$"}
+  },
+  "$comment": "TextNode render output carries lineSnapshots, glyphs, glyphCount, and rasterSha256 as deterministic evidence. The input pixelSpec is currently rgba8/srgb/straight."
+}

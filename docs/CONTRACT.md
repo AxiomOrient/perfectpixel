@@ -34,6 +34,11 @@ boundary is specified separately in [MCP_CONTRACT.md](MCP_CONTRACT.md).
 
 ```txt
 perfectpixel schema
+perfectpixel agent-schema
+perfectpixel agent-inspect --request <agent-inspect-request.json>
+perfectpixel agent-extract --request <agent-extract-request.json> --out-dir <dir>
+perfectpixel agent-render --request <agent-render-request.json> --out-dir <dir>
+perfectpixel agent-compare --request <agent-compare-request.json> --out-dir <dir>
 perfectpixel inspect <input.png|jpg|jpeg|webp>
 perfectpixel convert <input.png|jpg|jpeg|webp> --out <output.png|jpg|jpeg|webp> [--width <positive integer>] [--height <positive integer>] [--filter nearest|lanczos3] [--jpeg-quality <1..100>] [--background <#RRGGBB>]
 perfectpixel upscale <input.png|jpg|jpeg|webp> --out <output.png|jpg|jpeg|webp> --scale <integer >=2> [--filter nearest|lanczos3] [--jpeg-quality <1..100>] [--background <#RRGGBB>]
@@ -82,6 +87,27 @@ rename preserves the previous destination; if parent-directory synchronization f
 the command returns an explicit I/O error stating that the replacement may already be visible. A
 failure to confirm directory durability is never converted to success. The asset adapter does not
 silently select lossy WebP, AI upscaling, or a generic SVG conversion route.
+
+## Agent Image Protocol v2
+
+The `agent-*` commands expose the deterministic local image execution plane described in
+[AGENT_PROTOCOL_V2.md](AGENT_PROTOCOL_V2.md). The shared wire identity is
+`perfectpixel.agent-image/2`, with protocol and behavior version `2.0.0`. `agent-schema` returns
+the capability manifest and its stable digest inputs. `agent-inspect` reads one absolute,
+content-addressed PNG and returns numeric inspection plus a receipt. `agent-extract` derives an
+object, mask, and optional remainder using explicit alpha/chroma/color/component/mask selectors;
+it never claims semantic understanding. `agent-render` composes typed raster/object/text nodes
+with bounded affine transforms, opacity, and ordered deterministic raster operations. Text is
+shaped and rasterized only from supplied font bytes and a matching font digest; installed-font
+fallback is disabled. `agent-compare` evaluates explicit required/advisory assertions and may
+publish bounded diagnostic previews, but a failed required assertion is a rejected result rather
+than an application-process failure.
+
+Every request rejects unknown fields and every input artifact carries media type, byte length,
+SHA-256, kind, and pixel specification. Outputs are written to a new or empty directory through
+the same atomic artifact-set writer as generated workflows. Receipts bind request bytes,
+dependencies, dependency closure, output bytes, implementation version, and determinism class.
+The protocol does not generate images, call accounts, or provide a network fallback.
 
 ## Image Edit Pipeline Contract
 

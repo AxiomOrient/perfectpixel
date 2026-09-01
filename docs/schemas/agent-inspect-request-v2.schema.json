@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://perfectpixel.local/schemas/agent-inspect-request-v2.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "requestId", "source"],
+  "properties": {
+    "schema": {"const": "perfectpixel.agent-image/inspect/2"},
+    "requestId": {"type": "string", "minLength": 1, "maxLength": 192},
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "expectedSha256", "mediaType", "byteLength", "kind", "pixelSpec"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "expectedSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "mediaType": {"const": "image/png"},
+        "byteLength": {"type": "integer", "minimum": 1},
+        "kind": {"const": "working_raster"},
+        "pixelSpec": {
+          "type": "object", "additionalProperties": false,
+          "required": ["format", "colorSpace", "alphaMode"],
+          "properties": {
+            "format": {"const": "rgba8"},
+            "colorSpace": {"const": "srgb"},
+            "alphaMode": {"const": "straight"}
+          }
+        }
+      }
+    }
+  }
+}

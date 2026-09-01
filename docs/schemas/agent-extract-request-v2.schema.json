@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://perfectpixel.local/schemas/agent-extract-request-v2.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "requestId", "source", "selector"],
+  "properties": {
+    "schema": {"const": "perfectpixel.agent-image/extract/2"},
+    "requestId": {"type": "string", "minLength": 1, "maxLength": 192},
+    "source": {"$ref": "#/$defs/inputRaster"},
+    "mask": {"anyOf": [{"$ref": "#/$defs/inputMask"}, {"type": "null"}]},
+    "selector": {
+      "oneOf": [
+        {"type":"object","additionalProperties":false,"required":["type"],"properties":{"type":{"const":"existing_alpha"},"minimumAlpha":{"type":"integer","minimum":0,"maximum":255}}},
+        {"type":"object","additionalProperties":false,"required":["type","keys","tolerance"],"properties":{"type":{"const":"chroma_key"},"keys":{"type":"array","minItems":1,"maxItems":16,"items":{"type":"array","prefixItems":[{"type":"integer","minimum":0,"maximum":255},{"type":"integer","minimum":0,"maximum":255},{"type":"integer","minimum":0,"maximum":255}],"items":false}},"tolerance":{"type":"integer","minimum":0,"maximum":255}}},
+        {"type":"object","additionalProperties":false,"required":["type","minimum","maximum"],"properties":{"type":{"const":"color_range"},"minimum":{"$ref":"#/$defs/rgb"},"maximum":{"$ref":"#/$defs/rgb"}}},
+        {"type":"object","additionalProperties":false,"required":["type","point"],"properties":{"type":{"const":"alpha_component"},"point":{"type":"object","additionalProperties":false,"required":["xMillionths","yMillionths"],"properties":{"xMillionths":{"type":"integer","minimum":0,"maximum":1000000},"yMillionths":{"type":"integer","minimum":0,"maximum":1000000}}},"minimumAlpha":{"type":"integer","minimum":1,"maximum":255}}},
+        {"type":"object","additionalProperties":false,"required":["type"],"properties":{"type":{"const":"provided_mask"}}}
+      ]
+    },
+    "refinement": {"type":"object","additionalProperties":false,"properties":{"featherRadius":{"type":"integer","minimum":0,"maximum":32},"threshold":{"anyOf":[{"type":"integer","minimum":0,"maximum":255},{"type":"null"}]},"requireSoftAlpha":{"type":"boolean"}}},
+    "includeRemainder": {"type":"boolean"}
+  },
+  "$defs": {
+    "rgb": {"type":"array","prefixItems":[{"type":"integer","minimum":0,"maximum":255},{"type":"integer","minimum":0,"maximum":255},{"type":"integer","minimum":0,"maximum":255}],"items":false},
+    "pixelSpec": {"type":"object","additionalProperties":false,"required":["format","colorSpace","alphaMode"],"properties":{"format":{"const":"rgba8"},"colorSpace":{"const":"srgb"},"alphaMode":{"const":"straight"}}},
+    "inputBase": {"type":"object","additionalProperties":false,"required":["path","expectedSha256","mediaType","byteLength","kind","pixelSpec"],"properties":{"path":{"type":"string","minLength":1},"expectedSha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},"mediaType":{"const":"image/png"},"byteLength":{"type":"integer","minimum":1},"kind":{"type":"string"},"pixelSpec":{"$ref":"#/$defs/pixelSpec"}}},
+    "inputRaster": {"allOf":[{"$ref":"#/$defs/inputBase"},{"properties":{"kind":{"const":"working_raster"}}}]},
+    "inputMask": {"allOf":[{"$ref":"#/$defs/inputBase"},{"properties":{"kind":{"const":"mask"}}}]}
+  }
+}

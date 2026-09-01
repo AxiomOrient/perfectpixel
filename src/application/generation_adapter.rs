@@ -148,6 +148,10 @@ impl InputSnapshot {
         &self.source_path
     }
 
+    pub(super) fn sha256(&self) -> &str {
+        &self.sha256
+    }
+
     fn revision(&self) -> InputRevision {
         InputRevision {
             sha256: self.sha256.clone(),

@@ -26,11 +26,20 @@ package's upstream metadata for that complete resolved graph.
 | `resvg` | `0.47` | `0.47.0` | `Apache-2.0 OR MIT` |
 | `roxmltree` | `=0.21.1` | `0.21.1` | `MIT OR Apache-2.0` |
 | `rmcp` | `=3.1.4` | `3.1.4` | `Apache-2.0` |
+| `rustybuzz` | `=0.20.1` | `0.20.1` | `MIT` |
+| `sha2` | `=0.10.9` | `0.10.9` | `MIT OR Apache-2.0` |
 | `tokio` | `1` | `1.53.1` | `MIT OR Apache-2.0` |
+| `ttf-parser` | `=0.25.1` | `0.25.1` | `Apache-2.0 OR MIT` |
+| `unicode-script` | `=0.5.8` | `0.5.8` | `MIT OR Apache-2.0` |
 
 The feature selections and `default-features` settings remain exactly those in
 `Cargo.toml`; this table does not imply any additional features. A bare version
 in the requirement column is Cargo's implicit caret requirement.
+
+The deterministic text contract includes the public-domain `Tuffy.ttf` test
+fixture. Its exact dedication and provenance are recorded in
+[`tests/fixtures/Tuffy.LICENSE.txt`](tests/fixtures/Tuffy.LICENSE.txt); the
+runtime never consults an installed font directory.
 
 ## Source-only publication limits
 

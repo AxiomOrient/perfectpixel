@@ -72,7 +72,7 @@ fn removed_commands_are_unknown_and_never_redirect_or_dispatch() {
         assert_eq!(output.status.code(), Some(2));
         assert_eq!(
             error(&output)["message"],
-            format!("invalid option: unknown command '{command}'; use schema, inspect, convert, upscale, edit, psd, chroma-plan, vector, vector-analyze, normalize, bundle, motion-scaffold, or motion-build")
+            format!("invalid option: unknown command '{command}'; use schema, agent-schema, agent-inspect, agent-extract, agent-render, agent-compare, inspect, convert, upscale, edit, psd, chroma-plan, vector, vector-analyze, normalize, bundle, motion-scaffold, or motion-build")
         );
         assert!(
             !out.exists() && !report.exists() && !diagnostics.exists(),

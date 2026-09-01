@@ -1,0 +1,15 @@
+{
+  "schema": "perfectpixel.agent-image/extract/2",
+  "requestId": "example-extract",
+  "source": {
+    "path": "/tmp/source.png",
+    "expectedSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "mediaType": "image/png",
+    "byteLength": 128,
+    "kind": "working_raster",
+    "pixelSpec": {"format":"rgba8","colorSpace":"srgb","alphaMode":"straight"}
+  },
+  "selector": {"type":"existing_alpha","minimumAlpha":1},
+  "refinement": {"featherRadius":0,"threshold":null,"requireSoftAlpha":false},
+  "includeRemainder": true
+}

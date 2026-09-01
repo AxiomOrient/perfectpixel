@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://perfectpixel.local/schemas/agent-pin-set-v2.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "pins"],
+  "properties": {
+    "schema": {"const": "perfectpixel.agent-image/pin-set/2"},
+    "pins": {
+      "type": "array", "maxItems": 4096, "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "schema": "perfectpixel.agent-image/inspect/2",
+  "requestId": "inspect-example-1",
+  "source": {
+    "path": "/absolute/path/to/source.png",
+    "expectedSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "mediaType": "image/png",
+    "byteLength": 1234,
+    "kind": "working_raster",
+    "pixelSpec": {"format": "rgba8", "colorSpace": "srgb", "alphaMode": "straight"}
+  }
+}

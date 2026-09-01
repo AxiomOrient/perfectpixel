@@ -1,0 +1,24 @@
+{
+  "schema": "perfectpixel.agent-image/compare/2",
+  "requestId": "example-compare",
+  "before": {
+    "path": "/tmp/before.png",
+    "expectedSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "mediaType": "image/png",
+    "byteLength": 100,
+    "kind": "working_raster",
+    "pixelSpec": {"format": "rgba8", "colorSpace": "srgb", "alphaMode": "straight"}
+  },
+  "after": {
+    "path": "/tmp/after.png",
+    "expectedSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "mediaType": "image/png",
+    "byteLength": 100,
+    "kind": "working_raster",
+    "pixelSpec": {"format": "rgba8", "colorSpace": "srgb", "alphaMode": "straight"}
+  },
+  "assertions": [
+    {"type": "maximum_channel_error", "id": "bounded-drift", "severity": "required", "maximum": 8}
+  ],
+  "preview": {"difference": true, "maskOverlay": false, "maximumEdge": 1024}
+}

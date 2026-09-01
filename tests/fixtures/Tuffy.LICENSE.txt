@@ -1,0 +1,12 @@
+The Tuffy.ttf fixture is released into the public domain worldwide by its
+copyright holders. In jurisdictions where that dedication is not legally
+possible, the copyright holders grant every entity the right to use this work
+for any purpose, without conditions unless required by law.
+
+Copyright holders:
+  Thatcher Ulrich <tu@tulrich.com> (http://tulrich.com)
+  Karoly Barta <bartakarcsi@gmail.com>
+  Michael Evans (http://www.evertype.com)
+
+This fixture is vendored only for deterministic PerfectPixel text tests. It is
+not loaded from a system font directory at runtime.

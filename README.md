@@ -34,6 +34,7 @@ for direct dependency versions and license expressions.
 | `vector` | One raster and an SVG destination | An SVG only after an approved evaluation | `vector` is the sole raster-to-SVG quality-gated publication command. |
 | `vector-analyze` | One raster | Candidate-free route/profile evidence | Never writes SVG or diagnostics. |
 | `motion-scaffold` / `motion-build` | Supported raster-free SVG / motion request | Scene parts, animated SVG, Lottie JSON, dotLottie v2 layout | `motion-build` may publish derived `animated.svg` from an accepted raster-free SVG source; no semantic part inference or packed `.lottie` archive. |
+| `agent-schema` / `agent-inspect` / `agent-extract` / `agent-render` / `agent-compare` | Strict agent-image/2 JSON requests and content-addressed local artifacts | Deterministic capability, object, composition, and comparison receipts | Agent execution plane; no model inference, account, or network fallback. |
 | `perfectpixel-mcp` | Fixed-root MCP stdio calls | The same ten product commands as typed MCP tools | Local stdio only; fixed root, no network, shell passthrough, or generic runner. |
 
 The CLI makes no service, account, credential, network, UI-shell, gallery, or CI call
@@ -50,6 +51,11 @@ A Rust toolchain with Cargo is required to build the product.
 cargo build --release --locked
 cargo install --path . --locked
 perfectpixel schema
+perfectpixel agent-schema
+perfectpixel agent-inspect --request <agent-inspect-request.json>
+perfectpixel agent-extract --request <agent-extract-request.json> --out-dir <dir>
+perfectpixel agent-render --request <agent-render-request.json> --out-dir <dir>
+perfectpixel agent-compare --request <agent-compare-request.json> --out-dir <dir>
 perfectpixel --help
 ```
 
@@ -103,6 +109,12 @@ perfectpixel motion-build --request motion/motion-request.json --out-dir motion
 `vector --preset auto` may abstain and require an explicit family. A rejection is a
 normal result: it does not publish a final SVG. Use `vector-analyze` when route and
 profile evidence is needed without candidate generation.
+
+The agent-image/2 execution plane is documented in
+[AGENT_PROTOCOL_V2.md](docs/AGENT_PROTOCOL_V2.md). It binds every local artifact to an
+explicit SHA-256 and emits receipts for inspect, extract, render, and compare operations.
+`agent-render` accepts only deterministic raster operations and typed text nodes; it does not
+perform semantic selection or image generation.
 
 The PSD request requires `schemaVersion: 1`, `operation: "export_psd"`, raster `input`,
 `.psd` `output`, and explicit `path.alphaThreshold` (`1..=255`) plus `path.maxKnots`

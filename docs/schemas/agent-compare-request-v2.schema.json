@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://perfectpixel.local/schemas/agent-compare-request-v2.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "requestId", "before", "after", "assertions", "preview"],
+  "properties": {
+    "schema": {"const": "perfectpixel.agent-image/compare/2"},
+    "requestId": {"type": "string", "minLength": 1, "maxLength": 192},
+    "before": {"$ref": "#/$defs/workingInput"},
+    "after": {"$ref": "#/$defs/afterInput"},
+    "assertions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {"$ref": "#/$defs/assertion"},
+      "contains": {
+        "type": "object",
+        "required": ["severity"],
+        "properties": {"severity": {"const": "required"}}
+      },
+      "minContains": 1
+    },
+    "preview": {
+      "type": "object", "additionalProperties": false,
+      "required": ["difference", "maximumEdge"],
+      "properties": {
+        "difference": {"type": "boolean"},
+        "maskOverlay": {"type": "boolean", "default": false},
+        "maximumEdge": {"type": "integer", "minimum": 64, "maximum": 4096}
+      }
+    }
+  },
+  "$defs": {
+    "pixelSpec": {
+      "type": "object", "additionalProperties": false,
+      "required": ["format", "colorSpace", "alphaMode"],
+      "properties": {"format": {"const": "rgba8"}, "colorSpace": {"const": "srgb"}, "alphaMode": {"const": "straight"}}
+    },
+    "baseInput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "expectedSha256", "mediaType", "byteLength", "kind", "pixelSpec"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "expectedSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "mediaType": {"const": "image/png"},
+        "byteLength": {"type": "integer", "minimum": 1},
+        "kind": {"type": "string"},
+        "pixelSpec": {"$ref": "#/$defs/pixelSpec"}
+      }
+    },
+    "workingInput": {"allOf": [{"$ref": "#/$defs/baseInput"}, {"properties": {"kind": {"const": "working_raster"}}}]},
+    "afterInput": {"allOf": [{"$ref": "#/$defs/baseInput"}, {"properties": {"kind": {"enum": ["working_raster", "export_raster", "object"]}}}]},
+    "maskInput": {"allOf": [{"$ref": "#/$defs/baseInput"}, {"properties": {"kind": {"const": "mask"}}}]},
+    "severity": {"enum": ["required", "advisory"]},
+    "id": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"},
+    "ratio": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+    "rect": {
+      "type": "object", "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {"x": {"type": "integer", "minimum": 0}, "y": {"type": "integer", "minimum": 0}, "width": {"type": "integer", "minimum": 1}, "height": {"type": "integer", "minimum": 1}}
+    },
+    "assertion": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["type", "id", "severity"], "properties": {"type": {"const": "exact_equal"}, "id": {"$ref": "#/$defs/id"}, "severity": {"$ref": "#/$defs/severity"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "id", "severity"], "anyOf": [{"required": ["minimum"]}, {"required": ["maximum"]}], "properties": {"type": {"const": "changed_ratio"}, "id": {"$ref": "#/$defs/id"}, "severity": {"$ref": "#/$defs/severity"}, "minimum": {"$ref": "#/$defs/ratio"}, "maximum": {"$ref": "#/$defs/ratio"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "id", "severity", "maximum", "mask"], "properties": {"type": {"const": "outside_mask_changed_ratio"}, "id": {"$ref": "#/$defs/id"}, "severity": {"$ref": "#/$defs/severity"}, "maximum": {"$ref": "#/$defs/ratio"}, "mask": {"$ref": "#/$defs/maskInput"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "id", "severity", "minimum", "mask"], "properties": {"type": {"const": "inside_mask_changed_ratio"}, "id": {"$ref": "#/$defs/id"}, "severity": {"$ref": "#/$defs/severity"}, "minimum": {"$ref": "#/$defs/ratio"}, "maximum": {"$ref": "#/$defs/ratio"}, "mask": {"$ref": "#/$defs/maskInput"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "id", "severity", "region"], "properties": {"type": {"const": "unchanged_region_exact"}, "id": {"$ref": "#/$defs/id"}, "severity": {"$ref": "#/$defs/severity"}, "region": {"$ref": "#/$defs/rect"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "id", "severity", "minimum", "mask"], "properties": {"type": {"const": "alpha_iou"}, "id": {"$ref": "#/$defs/id"}, "severity": {"$ref": "#/$defs/severity"}, "minimum": {"$ref": "#/$defs/ratio"}, "mask": {"$ref": "#/$defs/maskInput"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "id", "severity", "maximum", "mask"], "properties": {"type": {"const": "mask_leakage_ratio"}, "id": {"$ref": "#/$defs/id"}, "severity": {"$ref": "#/$defs/severity"}, "maximum": {"$ref": "#/$defs/ratio"}, "mask": {"$ref": "#/$defs/maskInput"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "id", "severity", "expected", "tolerance"], "properties": {"type": {"const": "object_bounds"}, "id": {"$ref": "#/$defs/id"}, "severity": {"$ref": "#/$defs/severity"}, "expected": {"$ref": "#/$defs/rect"}, "tolerance": {"type": "integer", "minimum": 0}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "id", "severity", "expected", "tolerance"], "properties": {"type": {"const": "object_centroid"}, "id": {"$ref": "#/$defs/id"}, "severity": {"$ref": "#/$defs/severity"}, "expected": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "number"}}, "tolerance": {"type": "number", "minimum": 0}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "id", "severity", "expected", "tolerance"], "properties": {"type": {"const": "object_area"}, "id": {"$ref": "#/$defs/id"}, "severity": {"$ref": "#/$defs/severity"}, "expected": {"type": "integer", "minimum": 0}, "tolerance": {"type": "integer", "minimum": 0}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "id", "severity", "maximum"], "properties": {"type": {"const": "maximum_channel_error"}, "id": {"$ref": "#/$defs/id"}, "severity": {"$ref": "#/$defs/severity"}, "maximum": {"type": "integer", "minimum": 0, "maximum": 255}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "id", "severity", "maximum"], "properties": {"type": {"const": "mean_absolute_error"}, "id": {"$ref": "#/$defs/id"}, "severity": {"$ref": "#/$defs/severity"}, "maximum": {"$ref": "#/$defs/ratio"}}}
+      ]
+    }
+  }
+}

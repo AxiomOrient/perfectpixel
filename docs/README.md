@@ -13,6 +13,7 @@ below explain those sources but do not supersede them.
 | Configure or integrate the local MCP server | [MCP_CONTRACT.md](MCP_CONTRACT.md) |
 | Understand modules and ownership | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | Author or compile motion | [MOTION_CONTRACT.md](MOTION_CONTRACT.md) |
+| Integrate the deterministic agent image plane | [AGENT_PROTOCOL_V2.md](AGENT_PROTOCOL_V2.md) |
 | Maintain normalization invariants | [NORMALIZE_REVIEW_CONTRACT.md](NORMALIZE_REVIEW_CONTRACT.md) |
 | Work with SVG vectorization | [vectorize/README.md](vectorize/README.md) |
 | Trace capability coverage and boundaries | [FUNCTION_MATRIX.md](FUNCTION_MATRIX.md) |

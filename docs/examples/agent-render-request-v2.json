@@ -1,0 +1,21 @@
+{
+  "schema": "perfectpixel.agent-image/render/2",
+  "requestId": "example-render",
+  "canvas": {"width":1024,"height":1024,"background":[0,0,0,0]},
+  "nodes": [{
+    "id":"subject",
+    "z":10,
+    "source": {
+      "path":"/tmp/object.png",
+      "expectedSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "mediaType":"image/png",
+      "byteLength":128,
+      "kind":"object",
+      "pixelSpec":{"format":"rgba8","colorSpace":"srgb","alphaMode":"straight"}
+    },
+    "transform":{"matrix":[1,0,120,0,1,40,0,0,1]},
+    "opacity":255,
+    "filter":"nearest",
+    "operations":[{"op":"resize","width":256,"height":256,"filter":"nearest"}]
+  }]
+}

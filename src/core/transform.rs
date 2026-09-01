@@ -1,4 +1,5 @@
 use fast_image_resize as fir;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use super::{PpError, PpResult, Raster};
@@ -11,7 +12,8 @@ const MAX_EDIT_PIXELS: u64 = (MAX_EDIT_DIMENSION as u64) * (MAX_EDIT_DIMENSION a
 const MAX_EDIT_PIXEL_WORK: u64 = 256 * 1024 * 1024;
 
 /// Resampling algorithms with stable pixel semantics for the public raster core.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ResampleFilter {
     /// Copies the nearest source pixel. This is appropriate for pixel-art assets.
     Nearest,
@@ -49,7 +51,13 @@ pub fn resize_raster(
 /// Edits are applied in the order supplied by the caller.  The enum deliberately
 /// contains only geometric operations; semantic or generative image editing is
 /// outside PerfectPixel's local authority.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "op",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 pub enum RasterEdit {
     /// Keep the requested source rectangle.
     Crop {

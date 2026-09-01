@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://perfectpixel.local/schemas/agent-compare-result-v2.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "requestId", "status", "protocolVersion", "behaviorVersion", "allRequiredPassed", "metrics", "assertions", "previews", "receipt"],
+  "properties": {
+    "schema": {"const": "perfectpixel.agent-image/compare-result/2"},
+    "requestId": {"type": "string", "minLength": 1, "maxLength": 192},
+    "status": {"enum": ["committed", "rejected"]},
+    "protocolVersion": {"const": "2.0.0"},
+    "behaviorVersion": {"const": "2.0.0"},
+    "allRequiredPassed": {"type": "boolean"},
+    "metrics": {"$ref": "#/$defs/metrics"},
+    "assertions": {"type": "array", "minItems": 1, "maxItems": 256, "items": {"$ref": "#/$defs/assertionResult"}},
+    "previews": {"type": "array", "maxItems": 2, "items": {"$ref": "#/$defs/preview"}},
+    "receipt": {"$ref": "#/$defs/receipt"}
+  },
+  "$defs": {
+    "ratio": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+    "rect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": {"type": "integer", "minimum": 0},
+        "y": {"type": "integer", "minimum": 0},
+        "width": {"type": "integer", "minimum": 1},
+        "height": {"type": "integer", "minimum": 1}
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["changedPixelRatio", "meanAbsoluteError", "maximumChannelError", "alphaIou", "afterForegroundPixels", "afterBounds", "afterCentroid"],
+      "properties": {
+        "changedPixelRatio": {"$ref": "#/$defs/ratio"},
+        "meanAbsoluteError": {"$ref": "#/$defs/ratio"},
+        "maximumChannelError": {"type": "integer", "minimum": 0, "maximum": 255},
+        "alphaIou": {"$ref": "#/$defs/ratio"},
+        "afterForegroundPixels": {"type": "integer", "minimum": 0},
+        "afterBounds": {"oneOf": [{"$ref": "#/$defs/rect"}, {"type": "null"}]},
+        "afterCentroid": {"oneOf": [{"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "number"}}, {"type": "null"}]}
+      }
+    },
+    "assertionResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "assertionType", "severity", "passed", "observed", "message"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"},
+        "assertionType": {"enum": ["exact_equal", "changed_ratio", "outside_mask_changed_ratio", "inside_mask_changed_ratio", "unchanged_region_exact", "alpha_iou", "mask_leakage_ratio", "object_bounds", "object_centroid", "object_area", "maximum_channel_error", "mean_absolute_error"]},
+        "severity": {"enum": ["required", "advisory"]},
+        "passed": {"type": "boolean"},
+        "observed": {},
+        "message": {"type": "string"}
+      }
+    },
+    "pixelSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "colorSpace", "alphaMode"],
+      "properties": {
+        "format": {"const": "rgba8"},
+        "colorSpace": {"const": "srgb"},
+        "alphaMode": {"const": "straight"}
+      }
+    },
+    "dependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "mediaType", "byteLength"],
+      "properties": {
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "mediaType": {"const": "image/png"},
+        "byteLength": {"type": "integer", "minimum": 1}
+      }
+    },
+    "descriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "mediaType", "byteLength", "kind", "pixelSpec", "retention", "dependencies", "dependencyClosureSha256"],
+      "properties": {
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "mediaType": {"const": "image/png"},
+        "byteLength": {"type": "integer", "minimum": 1},
+        "kind": {"const": "working_raster"},
+        "pixelSpec": {"$ref": "#/$defs/pixelSpec"},
+        "retention": {"enum": ["task_scoped", "cacheable", "pinned"]},
+        "dependencies": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/dependency"}},
+        "dependencyClosureSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "preview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "relativePath", "descriptor"],
+      "properties": {
+        "role": {"enum": ["difference", "mask_overlay"]},
+        "relativePath": {"type": "string", "minLength": 1},
+        "descriptor": {"$ref": "#/$defs/descriptor"}
+      }
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "requestId", "operation", "status", "behaviorVersion", "implementationVersion", "requestSha256", "dependencyClosureSha256", "dependencies", "determinism"],
+      "properties": {
+        "schema": {"const": "perfectpixel.agent-image/receipt/2"},
+        "requestId": {"type": "string", "minLength": 1, "maxLength": 192},
+        "operation": {"const": "compare"},
+        "status": {"enum": ["committed", "rejected"]},
+        "behaviorVersion": {"const": "2.0.0"},
+        "implementationVersion": {"type": "string", "minLength": 1},
+        "requestSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "dependencyClosureSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "dependencies": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/dependency"}},
+        "outputSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "determinism": {"const": "bit_exact"}
+      }
+    }
+  }
+}

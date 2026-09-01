@@ -1,0 +1,237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://perfectpixel.local/schemas/agent-render-request-v2.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "requestId", "canvas", "nodes"],
+  "properties": {
+    "schema": {"const": "perfectpixel.agent-image/render/2"},
+    "requestId": {"type": "string", "minLength": 1, "maxLength": 192},
+    "canvas": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height"],
+      "properties": {
+        "width": {"type": "integer", "minimum": 1, "maximum": 8192},
+        "height": {"type": "integer", "minimum": 1, "maximum": 8192},
+        "background": {
+          "type": "array",
+          "prefixItems": [
+            {"type": "integer", "minimum": 0, "maximum": 255},
+            {"type": "integer", "minimum": 0, "maximum": 255},
+            {"type": "integer", "minimum": 0, "maximum": 255},
+            {"type": "integer", "minimum": 0, "maximum": 255}
+          ],
+          "items": false
+        }
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {
+      "type": "object",
+      "additionalProperties": false,
+        "required": ["id", "z", "transform"],
+        "oneOf": [
+          {
+            "required": ["source"],
+            "not": {"required": ["text"]},
+            "properties": {
+              "kind": {"enum": ["raster", "object"]}
+            }
+          },
+          {
+            "required": ["kind", "text"],
+            "not": {"required": ["source"]},
+            "properties": {
+              "kind": {"const": "text"}
+            }
+          }
+        ],
+        "properties": {
+          "id": {"type": "string", "minLength": 1, "maxLength": 128},
+          "z": {"type": "integer"},
+          "source": {"$ref": "#/$defs/input"},
+          "kind": {"enum": ["raster", "object", "text"]},
+          "text": {"$ref": "#/$defs/textNode"},
+          "transform": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["matrix"],
+            "properties": {
+              "matrix": {
+                "type": "array",
+                "minItems": 9,
+                "maxItems": 9,
+                "items": {"type": "number"}
+              }
+            }
+          },
+          "opacity": {"type": "integer", "minimum": 0, "maximum": 255},
+          "filter": {"const": "nearest"},
+          "operations": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {"$ref": "#/$defs/rasterOperation"}
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "expectedSha256", "mediaType", "byteLength", "kind", "pixelSpec"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "expectedSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "mediaType": {"const": "image/png"},
+        "byteLength": {"type": "integer", "minimum": 1},
+        "kind": {"enum": ["working_raster", "object"]},
+        "pixelSpec": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["format", "colorSpace", "alphaMode"],
+          "properties": {
+            "format": {"const": "rgba8"},
+            "colorSpace": {"const": "srgb"},
+            "alphaMode": {"const": "straight"}
+          }
+        }
+      }
+    },
+    "textNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["content", "direction", "language", "boxWidth", "boxHeight", "alignment", "lineBreak", "fontSize", "color", "pixelSpec", "font"],
+      "properties": {
+        "content": {"type": "string", "minLength": 1, "maxLength": 65536},
+        "direction": {"enum": ["ltr", "rtl"]},
+        "language": {"type": "string", "pattern": "^[A-Za-z0-9-]{1,35}$"},
+        "boxWidth": {"type": "integer", "minimum": 1, "maximum": 8192},
+        "boxHeight": {"type": "integer", "minimum": 1, "maximum": 8192},
+        "alignment": {"enum": ["start", "center", "end"]},
+        "lineBreak": {"enum": ["no_wrap", "word_wrap"]},
+        "fontSize": {"type": "number", "minimum": 0.1, "maximum": 1024},
+        "color": {
+          "type": "array",
+          "prefixItems": [
+            {"type": "integer", "minimum": 0, "maximum": 255},
+            {"type": "integer", "minimum": 0, "maximum": 255},
+            {"type": "integer", "minimum": 0, "maximum": 255},
+            {"type": "integer", "minimum": 0, "maximum": 255}
+          ],
+          "items": false
+        },
+        "pixelSpec": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["format", "colorSpace", "alphaMode"],
+          "properties": {
+            "format": {"const": "rgba8"},
+            "colorSpace": {"const": "srgb"},
+            "alphaMode": {"const": "straight"}
+          }
+        },
+        "font": {"$ref": "#/$defs/font"}
+      }
+    },
+    "font": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact", "path"],
+      "properties": {
+        "artifact": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "sha256", "mediaType", "byteLength", "relativePath"],
+          "properties": {
+            "id": {"type": "string", "minLength": 1, "maxLength": 160},
+            "sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
+            "mediaType": {"enum": ["font/ttf", "font/otf"]},
+            "byteLength": {"type": "integer", "minimum": 1, "maximum": 33554432},
+            "relativePath": {"type": "string", "minLength": 1, "maxLength": 512}
+          }
+        },
+        "path": {"type": "string", "minLength": 1, "maxLength": 4096}
+      }
+    },
+    "rasterOperation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "x", "y", "width", "height"],
+          "properties": {
+            "op": {"const": "crop"},
+            "x": {"type": "integer", "minimum": 0},
+            "y": {"type": "integer", "minimum": 0},
+            "width": {"type": "integer", "minimum": 1},
+            "height": {"type": "integer", "minimum": 1}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "quarterTurns"],
+          "properties": {
+            "op": {"const": "rotate"},
+            "quarterTurns": {"type": "integer", "enum": [1, 2, 3]}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "axis"],
+          "properties": {
+            "op": {"const": "flip"},
+            "axis": {"enum": ["horizontal", "vertical"]}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "width", "height", "filter"],
+          "properties": {
+            "op": {"const": "resize"},
+            "width": {"type": "integer", "minimum": 1},
+            "height": {"type": "integer", "minimum": 1},
+            "filter": {"enum": ["nearest", "lanczos3"]}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "keys", "tolerance", "feather"],
+          "properties": {
+            "op": {"const": "remove_background"},
+            "keys": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 16,
+              "uniqueItems": true,
+              "items": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "integer", "minimum": 0, "maximum": 255}}
+            },
+            "tolerance": {"type": "integer", "minimum": 0, "maximum": 255},
+            "feather": {"type": "integer", "minimum": 0, "maximum": 255}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "maxKeys", "minEdgeCoverageBasisPoints", "tolerance", "feather"],
+          "properties": {
+            "op": {"const": "remove_background_auto"},
+            "maxKeys": {"type": "integer", "minimum": 1, "maximum": 16},
+            "minEdgeCoverageBasisPoints": {"type": "integer", "minimum": 1, "maximum": 10000},
+            "tolerance": {"type": "integer", "minimum": 0, "maximum": 255},
+            "feather": {"type": "integer", "minimum": 0, "maximum": 255}
+          }
+        }
+      ]
+    }
+  }
+}

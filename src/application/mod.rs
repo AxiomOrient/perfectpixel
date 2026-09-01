@@ -1,19 +1,31 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
 use crate::{
-    apply_raster_edits_with_evidence, compose_bundle_with_packing, inspect_raster,
-    normalize_sprite, resize_raster, validate_normalize_plan_contract, AtomicArtifactSetWriter,
-    AtomicDirectoryEntry, AtomicDirectoryWriter, AtomicFileWriter, BundlePlan, DecodeLimits,
-    ImageCodec, MotionCompiler, MotionRequest, NormalizePlan, NormalizeRequest,
-    NormalizeStateImages, NormalizeStateSource, PngEncoder, Raster, RasterInspection,
-    ResampleFilter, SpriteBundleRequest, StateFrames, UnitScore, VectorAnalysisRequest,
-    VectorDetail, VectorOutcome, VectorPolicy, VectorRequest, Vectorizer, CHROMA_CANDIDATE_PALETTE,
-    CHROMA_PLAN_METRIC, CHROMA_PLAN_SCHEMA, MOTION_SCHEMA, PSD_DEFAULT_ALPHA_THRESHOLD,
-    PSD_DEFAULT_MAX_KNOTS, PSD_EXPORT_SCHEMA, PSD_MAX_DIMENSION, PSD_MAX_KNOTS,
+    agent_capability_manifest, apply_raster_edits_with_evidence, compare_images,
+    compose_bundle_with_packing, dependency_closure_sha256, difference_preview, extract_object,
+    inspect_raster, mask_overlay_preview, normalize_sprite, render_composition, resize_raster,
+    validate_compare_workload, validate_normalize_plan_contract, AffineTransform,
+    AgentArtifactDependency, AgentArtifactDescriptor, AgentArtifactKind, AgentArtifactRetention,
+    AgentCompareAssertionRequest, AgentComparePreviewResult, AgentCompareRequest,
+    AgentCompareResult, AgentDeterminismClass, AgentInputArtifact, AgentOperationReceipt,
+    AgentOperationStatus, AgentPixelSpec, AtomicArtifactSetWriter, AtomicDirectoryEntry,
+    AtomicDirectoryWriter, AtomicFileWriter, BundlePlan, CompareAssertion, CompareSeverity,
+    DecodeLimits, ExtractSelector, ImageCodec, LineBreakMode, MatteRefinement, MotionCompiler,
+    MotionRequest, NormalizePlan, NormalizeRequest, NormalizeStateImages, NormalizeStateSource,
+    PngEncoder, Raster, RasterEdit, RasterInspection, RenderCanvas, RenderFilter, RenderNode,
+    ResampleFilter, SpriteBundleRequest, StateFrames, TextAlignment, TextDirection,
+    TextLayoutSnapshot, TextNode, UnitScore, VectorAnalysisRequest, VectorDetail, VectorOutcome,
+    VectorPolicy, VectorRequest, Vectorizer, AGENT_BEHAVIOR_VERSION, AGENT_COMPARE_REQUEST_SCHEMA,
+    AGENT_COMPARE_RESULT_SCHEMA, AGENT_EXTRACT_REQUEST_SCHEMA, AGENT_EXTRACT_RESULT_SCHEMA,
+    AGENT_INSPECT_REQUEST_SCHEMA, AGENT_INSPECT_RESULT_SCHEMA, AGENT_PROTOCOL_VERSION,
+    AGENT_RECEIPT_SCHEMA, AGENT_RENDER_REQUEST_SCHEMA, AGENT_RENDER_RESULT_SCHEMA,
+    CHROMA_CANDIDATE_PALETTE, CHROMA_PLAN_METRIC, CHROMA_PLAN_SCHEMA, MAX_COMPARE_ASSERTIONS,
+    MAX_COMPARE_DECODED_PIXELS, MOTION_SCHEMA, PSD_DEFAULT_ALPHA_THRESHOLD, PSD_DEFAULT_MAX_KNOTS,
+    PSD_EXPORT_SCHEMA, PSD_MAX_DIMENSION, PSD_MAX_KNOTS,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
@@ -41,6 +53,7 @@ const MAX_CONTROL_READ_BYTES: usize = 8 * 1024 * 1024;
 const MAX_SVG_READ_BYTES: usize = 16 * 1024 * 1024;
 const MAX_ARTIFACT_FILE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_RASTER_READ_BYTES: usize = 320 * 1024 * 1024;
+const MAX_FONT_READ_BYTES: usize = 32 * 1024 * 1024;
 const CHROMA_PLAN_OPERATION: &str = "chroma_plan";
 const MAX_GENERATION_DECODED_RASTER_BYTES: usize = 512 * 1024 * 1024;
 const VECTOR_DIAGNOSTICS_OWNERSHIP_FILE: &str = ".perfectpixel-vector-diagnostics.json";
@@ -59,6 +72,11 @@ PRODUCT
 
 USAGE
   perfectpixel schema
+  perfectpixel agent-schema
+  perfectpixel agent-inspect --request <agent-inspect-request.json>
+  perfectpixel agent-extract --request <agent-extract-request.json> --out-dir <dir>
+  perfectpixel agent-render --request <agent-render-request.json> --out-dir <dir>
+  perfectpixel agent-compare --request <agent-compare-request.json> --out-dir <dir>
   perfectpixel inspect <input.png|jpg|jpeg|webp>
   perfectpixel convert <input.png|jpg|jpeg|webp> --out <output.png|jpg|jpeg|webp> [--width <positive integer>] [--height <positive integer>] [--filter nearest|lanczos3] [--jpeg-quality <1..100>] [--background <#RRGGBB>]
   perfectpixel upscale <input.png|jpg|jpeg|webp> --out <output.png|jpg|jpeg|webp> --scale <integer >=2> [--filter nearest|lanczos3] [--jpeg-quality <1..100>] [--background <#RRGGBB>]
@@ -245,6 +263,14 @@ fn run(args: Vec<String>) -> PpResult<String> {
             reject_extra_args(&args[1..], "schema")?;
             schema()
         }
+        "agent-schema" => {
+            reject_extra_args(&args[1..], "agent-schema")?;
+            agent_schema()
+        }
+        "agent-inspect" => agent_inspect(&args[1..]),
+        "agent-extract" => agent_extract(&args[1..]),
+        "agent-render" => agent_render(&args[1..]),
+        "agent-compare" => agent_compare(&args[1..]),
         "inspect" => inspect(&args[1..]),
         "convert" => convert(&args[1..]),
         "upscale" => upscale(&args[1..]),
@@ -258,7 +284,7 @@ fn run(args: Vec<String>) -> PpResult<String> {
         "motion-scaffold" => motion_scaffold(&args[1..]),
         "motion-build" => motion_build(&args[1..]),
         other => Err(PpError::InvalidOption(format!(
-            "unknown command '{}'; use schema, inspect, convert, upscale, edit, psd, chroma-plan, vector, vector-analyze, normalize, bundle, motion-scaffold, or motion-build",
+            "unknown command '{}'; use schema, agent-schema, agent-inspect, agent-extract, agent-render, agent-compare, inspect, convert, upscale, edit, psd, chroma-plan, vector, vector-analyze, normalize, bundle, motion-scaffold, or motion-build",
             other
         ))),
     }
@@ -274,6 +300,11 @@ fn schema() -> PpResult<String> {
         publication_policy: "evaluate-before-publish",
         commands: &[
             "schema",
+            "agent-schema",
+            "agent-inspect",
+            "agent-extract",
+            "agent-render",
+            "agent-compare",
             "inspect",
             "convert",
             "upscale",
@@ -430,6 +461,1186 @@ fn schema() -> PpResult<String> {
         path: PathBuf::from("<schema>"),
         message: source.to_string(),
     })
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AgentInspectRequest {
+    schema: String,
+    request_id: String,
+    source: AgentInputArtifact,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentInspectResult {
+    schema: &'static str,
+    request_id: String,
+    status: &'static str,
+    protocol_version: &'static str,
+    behavior_version: &'static str,
+    source: AgentArtifactDescriptor,
+    inspection: RasterInspection,
+    receipt: AgentOperationReceipt,
+}
+
+fn agent_schema() -> PpResult<String> {
+    serialize_json(
+        &agent_capability_manifest(env!("CARGO_PKG_VERSION")),
+        "<agent-schema>",
+    )
+}
+
+fn agent_inspect(args: &[String]) -> PpResult<String> {
+    validate_options(args, &["--request"])?;
+    let request_path = option_path(args, "--request")?;
+    validate_file_extension(&request_path, &["json"], "agent inspect request")?;
+    let (request, request_snapshot): (AgentInspectRequest, _) =
+        read_json_request_snapshot(&request_path)?;
+    if request.schema != AGENT_INSPECT_REQUEST_SCHEMA
+        || request.request_id.trim().is_empty()
+        || request.request_id.len() > 192
+    {
+        return Err(PpError::InvalidRequest(
+            "agent inspect envelope is invalid".to_owned(),
+        ));
+    }
+    if request.source.media_type != "image/png"
+        || request.source.kind != AgentArtifactKind::WorkingRaster
+    {
+        return Err(PpError::InvalidRequest(
+            "agent inspect requires a working image/png artifact".to_owned(),
+        ));
+    }
+    let input = PathBuf::from(&request.source.path);
+    if !input.is_absolute()
+        || input
+            .components()
+            .any(|component| component == Component::ParentDir)
+    {
+        return Err(PpError::InvalidRequest(
+            "agent inspect source path must be absolute and traversal-free".to_owned(),
+        ));
+    }
+    if request.source.pixel_spec != AgentPixelSpec::rgba8_srgb_straight() {
+        return Err(PpError::InvalidRequest(
+            "agent inspect source pixelSpec must be rgba8/srgb/straight".to_owned(),
+        ));
+    }
+    validate_raster_input_path(&input)?;
+    let (bytes, input_snapshot) = InputSnapshot::capture(&input, MAX_RASTER_READ_BYTES)?;
+    if u64::try_from(bytes.len()).ok() != Some(request.source.byte_length)
+        || crate::sha256_hex(&bytes) != request.source.expected_sha256
+    {
+        return Err(PpError::InvalidRequest(
+            "agent inspect source changed or does not match its content address".to_owned(),
+        ));
+    }
+    let image = ImageCodec::decode_rgba_bytes(&input, &bytes, DecodeLimits::default())?;
+    let inspection = inspect_raster(&image);
+    let dependency = AgentArtifactDependency {
+        sha256: request.source.expected_sha256.clone(),
+        media_type: request.source.media_type.clone(),
+        byte_length: request.source.byte_length,
+    };
+    let dependencies = vec![dependency];
+    let closure = dependency_closure_sha256(&dependencies)?;
+    let source = AgentArtifactDescriptor {
+        sha256: request.source.expected_sha256.clone(),
+        media_type: request.source.media_type.clone(),
+        byte_length: request.source.byte_length,
+        kind: AgentArtifactKind::WorkingRaster,
+        pixel_spec: Some(AgentPixelSpec::rgba8_srgb_straight()),
+        retention: AgentArtifactRetention::TaskScoped,
+        dependencies: Vec::new(),
+        dependency_closure_sha256: dependency_closure_sha256(&[])?,
+    };
+    let receipt = AgentOperationReceipt {
+        schema: AGENT_RECEIPT_SCHEMA.to_owned(),
+        request_id: request.request_id.clone(),
+        operation: "inspect".to_owned(),
+        status: AgentOperationStatus::Committed,
+        behavior_version: AGENT_BEHAVIOR_VERSION.to_owned(),
+        implementation_version: env!("CARGO_PKG_VERSION").to_owned(),
+        request_sha256: request_snapshot.sha256().to_owned(),
+        dependency_closure_sha256: closure,
+        dependencies,
+        output_sha256: None,
+        determinism: AgentDeterminismClass::BitExact,
+    };
+    if input_snapshot.sha256() != request.source.expected_sha256 {
+        return Err(PpError::InvalidRequest(
+            "agent inspect input snapshot does not match its content address".to_owned(),
+        ));
+    }
+    serialize_json(
+        &AgentInspectResult {
+            schema: AGENT_INSPECT_RESULT_SCHEMA,
+            request_id: request.request_id,
+            status: "committed",
+            protocol_version: AGENT_PROTOCOL_VERSION,
+            behavior_version: AGENT_BEHAVIOR_VERSION,
+            source,
+            inspection,
+            receipt,
+        },
+        "<agent-inspect>",
+    )
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AgentExtractRequest {
+    schema: String,
+    request_id: String,
+    source: AgentInputArtifact,
+    selector: ExtractSelector,
+    #[serde(default)]
+    mask: Option<AgentInputArtifact>,
+    #[serde(default)]
+    refinement: MatteRefinement,
+    #[serde(default = "default_true")]
+    include_remainder: bool,
+}
+
+const fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentExtractResult {
+    schema: &'static str,
+    request_id: String,
+    status: &'static str,
+    protocol_version: &'static str,
+    behavior_version: &'static str,
+    source_canvas: AgentCanvasSize,
+    source_bbox: AgentBounds,
+    pivot: [f64; 2],
+    completeness: &'static str,
+    occluded_background: &'static str,
+    soft_alpha_pixels: u64,
+    object: AgentPublishedArtifact,
+    mask: AgentPublishedArtifact,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    remainder: Option<AgentPublishedArtifact>,
+    receipt: AgentOperationReceipt,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentCanvasSize {
+    width: u32,
+    height: u32,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentBounds {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentPublishedArtifact {
+    relative_path: String,
+    descriptor: AgentArtifactDescriptor,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AgentRenderRequest {
+    schema: String,
+    request_id: String,
+    canvas: AgentRenderCanvas,
+    nodes: Vec<AgentRenderNodeRequest>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AgentRenderCanvas {
+    width: u32,
+    height: u32,
+    #[serde(default)]
+    background: [u8; 4],
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AgentRenderNodeRequest {
+    id: String,
+    z: i32,
+    #[serde(default)]
+    kind: AgentRenderNodeKind,
+    #[serde(default)]
+    source: Option<AgentInputArtifact>,
+    #[serde(default)]
+    text: Option<AgentTextNodeRequest>,
+    transform: AffineTransform,
+    #[serde(default = "default_opacity")]
+    opacity: u8,
+    #[serde(default = "default_render_filter")]
+    filter: RenderFilter,
+    /// Optional deterministic preprocessing applied to this source before
+    /// composition. This is the canonical home for the former image-edit
+    /// geometric/background operations.
+    #[serde(default)]
+    operations: Vec<RasterEdit>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+enum AgentRenderNodeKind {
+    #[default]
+    Raster,
+    Object,
+    Text,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AgentTextNodeRequest {
+    content: String,
+    direction: TextDirection,
+    language: String,
+    box_width: u32,
+    box_height: u32,
+    alignment: TextAlignment,
+    line_break: LineBreakMode,
+    font_size: f32,
+    color: [u8; 4],
+    pixel_spec: AgentPixelSpec,
+    font: AgentFontArtifact,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AgentFontArtifact {
+    artifact: AgentFontArtifactRef,
+    path: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AgentFontArtifactRef {
+    id: String,
+    sha256: String,
+    media_type: String,
+    byte_length: u64,
+    relative_path: String,
+}
+
+const fn default_opacity() -> u8 {
+    255
+}
+const fn default_render_filter() -> RenderFilter {
+    RenderFilter::Nearest
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentRenderResult {
+    schema: &'static str,
+    request_id: String,
+    status: &'static str,
+    protocol_version: &'static str,
+    behavior_version: &'static str,
+    output: AgentPublishedArtifact,
+    text_nodes: Vec<AgentTextNodeEvidence>,
+    receipt: AgentOperationReceipt,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentTextNodeEvidence {
+    node_id: String,
+    layout: TextLayoutSnapshot,
+}
+
+fn valid_compare_assertion_id(value: &str) -> bool {
+    let mut bytes = value.bytes();
+    bytes.next().is_some_and(|byte| byte.is_ascii_alphabetic())
+        && value.len() <= 64
+        && bytes.all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+fn agent_extract(args: &[String]) -> PpResult<String> {
+    validate_options(args, &["--request", "--out-dir"])?;
+    let request_path = option_path(args, "--request")?;
+    let output_dir = option_path(args, "--out-dir")?;
+    validate_file_extension(&request_path, &["json"], "agent extract request")?;
+    validate_agent_output_dir(&request_path, &output_dir, &[])?;
+    let (request, request_snapshot): (AgentExtractRequest, _) =
+        read_json_request_snapshot(&request_path)?;
+    validate_agent_request_id(
+        &request.schema,
+        AGENT_EXTRACT_REQUEST_SCHEMA,
+        &request.request_id,
+    )?;
+    let (source_bytes, source, source_dependency) =
+        read_agent_raster(&request.source, AgentArtifactKind::WorkingRaster)?;
+    let source_path = PathBuf::from(&request.source.path);
+    validate_agent_output_dir(&request_path, &output_dir, &[source_path.as_path()])?;
+    let mut dependencies = vec![source_dependency.clone()];
+    let mask_raster = if let Some(mask) = &request.mask {
+        let (_mask_bytes, raster, dependency) = read_agent_raster(mask, AgentArtifactKind::Mask)?;
+        validate_agent_output_dir(
+            &request_path,
+            &output_dir,
+            &[source_path.as_path(), Path::new(&mask.path)],
+        )?;
+        dependencies.push(dependency);
+        Some(raster)
+    } else {
+        None
+    };
+    if matches!(&request.selector, ExtractSelector::ProvidedMask) != mask_raster.is_some() {
+        return Err(PpError::InvalidRequest(
+            "provided_mask selector requires exactly one mask artifact and other selectors must not provide one".to_owned(),
+        ));
+    }
+    dependencies.sort();
+    dependencies.dedup();
+    let extracted = extract_object(
+        &source,
+        &request.selector,
+        mask_raster.as_ref(),
+        request.refinement,
+    )?;
+    let object_bytes = PngEncoder::encode_rgba(&extracted.object)?;
+    let mask_bytes = PngEncoder::encode_rgba(&extracted.mask)?;
+    let remainder_bytes = request
+        .include_remainder
+        .then(|| PngEncoder::encode_rgba(&extracted.remainder))
+        .transpose()?;
+    let object_descriptor = agent_output_descriptor(
+        &object_bytes,
+        AgentArtifactKind::Object,
+        dependencies.clone(),
+    )?;
+    let mask_descriptor =
+        agent_output_descriptor(&mask_bytes, AgentArtifactKind::Mask, dependencies.clone())?;
+    let remainder_descriptor = remainder_bytes
+        .as_ref()
+        .map(|bytes| {
+            agent_output_descriptor(
+                bytes,
+                AgentArtifactKind::WorkingRaster,
+                dependencies.clone(),
+            )
+        })
+        .transpose()?;
+
+    let mut entries = vec![
+        AtomicDirectoryEntry {
+            relative_path: Path::new("object.png"),
+            bytes: &object_bytes,
+            sha256: crate::sha256(&object_bytes),
+        },
+        AtomicDirectoryEntry {
+            relative_path: Path::new("mask.png"),
+            bytes: &mask_bytes,
+            sha256: crate::sha256(&mask_bytes),
+        },
+    ];
+    if let Some(bytes) = remainder_bytes.as_ref() {
+        entries.push(AtomicDirectoryEntry {
+            relative_path: Path::new("remainder.png"),
+            bytes,
+            sha256: crate::sha256(bytes),
+        });
+    }
+    AtomicDirectoryWriter::replace(&output_dir, &entries)?;
+    let closure = dependency_closure_sha256(&dependencies)?;
+    let receipt = AgentOperationReceipt {
+        schema: AGENT_RECEIPT_SCHEMA.to_owned(),
+        request_id: request.request_id.clone(),
+        operation: "extract".to_owned(),
+        status: AgentOperationStatus::Committed,
+        behavior_version: AGENT_BEHAVIOR_VERSION.to_owned(),
+        implementation_version: env!("CARGO_PKG_VERSION").to_owned(),
+        request_sha256: request_snapshot.sha256().to_owned(),
+        dependency_closure_sha256: closure,
+        dependencies,
+        output_sha256: Some(object_descriptor.sha256.clone()),
+        determinism: AgentDeterminismClass::BitExact,
+    };
+    let bounds = extracted.source_bounds;
+    let _ = source_bytes;
+    serialize_json(
+        &AgentExtractResult {
+            schema: AGENT_EXTRACT_RESULT_SCHEMA,
+            request_id: request.request_id,
+            status: "committed",
+            protocol_version: AGENT_PROTOCOL_VERSION,
+            behavior_version: AGENT_BEHAVIOR_VERSION,
+            source_canvas: AgentCanvasSize {
+                width: extracted.source_width,
+                height: extracted.source_height,
+            },
+            source_bbox: AgentBounds {
+                x: bounds.x,
+                y: bounds.y,
+                width: bounds.width,
+                height: bounds.height,
+            },
+            pivot: [0.5, 0.5],
+            completeness: "visible_pixels_only",
+            occluded_background: "unknown",
+            soft_alpha_pixels: extracted.soft_alpha_pixels,
+            object: AgentPublishedArtifact {
+                relative_path: "object.png".to_owned(),
+                descriptor: object_descriptor,
+            },
+            mask: AgentPublishedArtifact {
+                relative_path: "mask.png".to_owned(),
+                descriptor: mask_descriptor,
+            },
+            remainder: remainder_descriptor.map(|descriptor| AgentPublishedArtifact {
+                relative_path: "remainder.png".to_owned(),
+                descriptor,
+            }),
+            receipt,
+        },
+        "<agent-extract>",
+    )
+}
+
+fn agent_render(args: &[String]) -> PpResult<String> {
+    validate_options(args, &["--request", "--out-dir"])?;
+    let request_path = option_path(args, "--request")?;
+    let output_dir = option_path(args, "--out-dir")?;
+    validate_file_extension(&request_path, &["json"], "agent render request")?;
+    let (request, request_snapshot): (AgentRenderRequest, _) =
+        read_json_request_snapshot(&request_path)?;
+    validate_agent_request_id(
+        &request.schema,
+        AGENT_RENDER_REQUEST_SCHEMA,
+        &request.request_id,
+    )?;
+    if request.nodes.is_empty() || request.nodes.len() > 64 {
+        return Err(PpError::InvalidRequest(
+            "render nodes must contain 1..=64 entries".to_owned(),
+        ));
+    }
+    let mut dependencies = Vec::with_capacity(request.nodes.len());
+    let mut inputs = Vec::with_capacity(request.nodes.len());
+    let mut input_paths = Vec::with_capacity(request.nodes.len());
+    let mut text_nodes = Vec::new();
+    let mut ids = BTreeSet::new();
+    for node in request.nodes {
+        if !ids.insert(node.id.clone()) {
+            return Err(PpError::InvalidRequest(
+                "render node ids must be unique".to_owned(),
+            ));
+        }
+        let (raster, dependency) = match node.kind {
+            AgentRenderNodeKind::Raster | AgentRenderNodeKind::Object => {
+                if node.text.is_some() {
+                    return Err(PpError::InvalidRequest(
+                        "raster render nodes cannot contain a text node".to_owned(),
+                    ));
+                }
+                let source = node.source.as_ref().ok_or_else(|| {
+                    PpError::InvalidRequest("raster render nodes require a source".to_owned())
+                })?;
+                let expected_kind = match node.kind {
+                    AgentRenderNodeKind::Raster => AgentArtifactKind::WorkingRaster,
+                    AgentRenderNodeKind::Object => AgentArtifactKind::Object,
+                    AgentRenderNodeKind::Text => {
+                        return Err(PpError::InvalidRequest(
+                            "text node kind cannot use a raster source".to_owned(),
+                        ));
+                    }
+                };
+                if source.kind != expected_kind {
+                    return Err(PpError::InvalidRequest(
+                        "render source kind does not match its typed node kind".to_owned(),
+                    ));
+                }
+                let path = PathBuf::from(&source.path);
+                input_paths.push(path);
+                let (_bytes, raster, dependency) = read_agent_raster_any(source)?;
+                let (raster, _auto_background_evidence) =
+                    apply_raster_edits_with_evidence(&raster, &node.operations)?;
+                (raster, dependency)
+            }
+            AgentRenderNodeKind::Text => {
+                if node.source.is_some() {
+                    return Err(PpError::InvalidRequest(
+                        "text render nodes cannot contain an image source".to_owned(),
+                    ));
+                }
+                if !node.operations.is_empty() {
+                    return Err(PpError::InvalidRequest(
+                        "text render nodes do not accept raster operations".to_owned(),
+                    ));
+                }
+                let text = node.text.as_ref().ok_or_else(|| {
+                    PpError::InvalidRequest(
+                        "text render nodes require a typed text node".to_owned(),
+                    )
+                })?;
+                let (font_bytes, dependency) = read_agent_font(&text.font)?;
+                input_paths.push(PathBuf::from(&text.font.path));
+                let text_node = TextNode {
+                    content: text.content.clone(),
+                    direction: text.direction,
+                    language: text.language.clone(),
+                    box_width: text.box_width,
+                    box_height: text.box_height,
+                    alignment: text.alignment,
+                    line_break: text.line_break,
+                    font_size: text.font_size,
+                    color: text.color,
+                    pixel_spec: text.pixel_spec,
+                    font_bytes,
+                    font_sha256: text.font.artifact.sha256.clone(),
+                };
+                let rendered = text_node.render()?;
+                text_nodes.push(AgentTextNodeEvidence {
+                    node_id: node.id.clone(),
+                    layout: rendered.layout,
+                });
+                (rendered.raster, dependency)
+            }
+        };
+        dependencies.push(dependency);
+        inputs.push(RenderNode {
+            id: node.id,
+            z: node.z,
+            source: raster,
+            transform: node.transform,
+            opacity: node.opacity,
+            filter: node.filter,
+        });
+    }
+    let refs = input_paths.iter().map(PathBuf::as_path).collect::<Vec<_>>();
+    validate_agent_output_dir(&request_path, &output_dir, &refs)?;
+    dependencies.sort();
+    dependencies.dedup();
+    let rendered = render_composition(
+        RenderCanvas {
+            width: request.canvas.width,
+            height: request.canvas.height,
+            background: request.canvas.background,
+        },
+        &inputs,
+    )?;
+    let output_bytes = PngEncoder::encode_rgba(&rendered)?;
+    let output_descriptor = agent_output_descriptor(
+        &output_bytes,
+        AgentArtifactKind::WorkingRaster,
+        dependencies.clone(),
+    )?;
+    let entries = [AtomicDirectoryEntry {
+        relative_path: Path::new("render.png"),
+        bytes: &output_bytes,
+        sha256: crate::sha256(&output_bytes),
+    }];
+    AtomicDirectoryWriter::replace(&output_dir, &entries)?;
+    let receipt = AgentOperationReceipt {
+        schema: AGENT_RECEIPT_SCHEMA.to_owned(),
+        request_id: request.request_id.clone(),
+        operation: "render".to_owned(),
+        status: AgentOperationStatus::Committed,
+        behavior_version: AGENT_BEHAVIOR_VERSION.to_owned(),
+        implementation_version: env!("CARGO_PKG_VERSION").to_owned(),
+        request_sha256: request_snapshot.sha256().to_owned(),
+        dependency_closure_sha256: dependency_closure_sha256(&dependencies)?,
+        dependencies,
+        output_sha256: Some(output_descriptor.sha256.clone()),
+        determinism: AgentDeterminismClass::BackendDeterministic,
+    };
+    serialize_json(
+        &AgentRenderResult {
+            schema: AGENT_RENDER_RESULT_SCHEMA,
+            request_id: request.request_id,
+            status: "committed",
+            protocol_version: AGENT_PROTOCOL_VERSION,
+            behavior_version: AGENT_BEHAVIOR_VERSION,
+            output: AgentPublishedArtifact {
+                relative_path: "render.png".to_owned(),
+                descriptor: output_descriptor,
+            },
+            text_nodes,
+            receipt,
+        },
+        "<agent-render>",
+    )
+}
+
+fn agent_compare(args: &[String]) -> PpResult<String> {
+    validate_options(args, &["--request", "--out-dir"])?;
+    let request_path = option_path(args, "--request")?;
+    let output_dir = option_path(args, "--out-dir")?;
+    validate_file_extension(&request_path, &["json"], "agent compare request")?;
+    let (request, request_snapshot): (AgentCompareRequest, _) =
+        read_json_request_snapshot(&request_path)?;
+    validate_agent_request_id(
+        &request.schema,
+        AGENT_COMPARE_REQUEST_SCHEMA,
+        &request.request_id,
+    )?;
+    if request.preview.maximum_edge < 64 || request.preview.maximum_edge > 4096 {
+        return Err(PpError::InvalidRequest(
+            "compare preview maximumEdge must be within 64..=4096".to_owned(),
+        ));
+    }
+    if request.assertions.is_empty() || request.assertions.len() > MAX_COMPARE_ASSERTIONS {
+        return Err(PpError::InvalidRequest(format!(
+            "compare assertions must contain 1..={MAX_COMPARE_ASSERTIONS} entries"
+        )));
+    }
+    let mut assertion_ids = BTreeSet::new();
+    let mut has_required_assertion = false;
+    for assertion in &request.assertions {
+        if !valid_compare_assertion_id(assertion.id()) || !assertion_ids.insert(assertion.id()) {
+            return Err(PpError::InvalidRequest(
+                "compare assertion ids must be unique bounded values".to_owned(),
+            ));
+        }
+        has_required_assertion |= assertion.severity() == CompareSeverity::Required;
+    }
+    if !has_required_assertion {
+        return Err(PpError::InvalidRequest(
+            "compare requires at least one required assertion".to_owned(),
+        ));
+    }
+    let (_before_bytes, before, before_dependency) =
+        read_agent_raster(&request.before, AgentArtifactKind::WorkingRaster)?;
+    let (_after_bytes, after, after_dependency) = read_agent_raster_any(&request.after)?;
+    if !matches!(
+        request.after.kind,
+        AgentArtifactKind::WorkingRaster
+            | AgentArtifactKind::Object
+            | AgentArtifactKind::ExportRaster
+    ) {
+        return Err(PpError::InvalidRequest(
+            "compare after artifact kind must be working_raster, export_raster, or object"
+                .to_owned(),
+        ));
+    }
+    if before.width() != after.width() || before.height() != after.height() {
+        return Err(PpError::InvalidRequest(
+            "compare before/after dimensions must match".to_owned(),
+        ));
+    }
+    validate_compare_workload(before.width(), before.height(), request.assertions.len())?;
+    let mut dependencies = vec![before_dependency, after_dependency];
+    let mut masks = Vec::<Raster>::new();
+    let mut mask_paths = Vec::<PathBuf>::new();
+    let mut mask_indices = BTreeMap::<String, (usize, u64)>::new();
+    let mut decoded_pixels = u64::from(before.width())
+        .checked_mul(u64::from(before.height()))
+        .and_then(|pixels| pixels.checked_mul(2))
+        .ok_or_else(|| PpError::InvalidRequest("compare decoded pixels overflowed".to_owned()))?;
+    let mut assertions = Vec::with_capacity(request.assertions.len());
+    for assertion in request.assertions {
+        assertions.push(prepare_compare_assertion(
+            assertion,
+            &mut masks,
+            &mut dependencies,
+            &mut mask_paths,
+            &mut mask_indices,
+            &mut decoded_pixels,
+            (before.width(), before.height()),
+        )?);
+    }
+    let mut input_paths = vec![
+        PathBuf::from(&request.before.path),
+        PathBuf::from(&request.after.path),
+    ];
+    input_paths.extend(mask_paths);
+    let refs = input_paths.iter().map(PathBuf::as_path).collect::<Vec<_>>();
+    validate_agent_output_dir(&request_path, &output_dir, &refs)?;
+    dependencies.sort();
+    dependencies.dedup();
+    let outcome = compare_images(&before, &after, &masks, &assertions)?;
+
+    let mut preview_payloads = Vec::<(&'static str, &'static str, Vec<u8>)>::new();
+    if request.preview.difference {
+        let preview = bounded_preview(
+            difference_preview(&before, &after)?,
+            request.preview.maximum_edge,
+        )?;
+        preview_payloads.push((
+            "difference",
+            "difference.png",
+            PngEncoder::encode_rgba(&preview)?,
+        ));
+    }
+    if request.preview.mask_overlay {
+        let Some(mask) = masks.first() else {
+            return Err(PpError::InvalidRequest(
+                "maskOverlay preview requires at least one mask assertion".to_owned(),
+            ));
+        };
+        let preview = bounded_preview(
+            mask_overlay_preview(&after, mask)?,
+            request.preview.maximum_edge,
+        )?;
+        preview_payloads.push((
+            "mask_overlay",
+            "mask-overlay.png",
+            PngEncoder::encode_rgba(&preview)?,
+        ));
+    }
+
+    let mut published_previews = Vec::with_capacity(preview_payloads.len());
+    let mut entries = Vec::with_capacity(preview_payloads.len());
+    for (role, relative_path, bytes) in &preview_payloads {
+        let descriptor = agent_output_descriptor(
+            bytes,
+            AgentArtifactKind::WorkingRaster,
+            dependencies.clone(),
+        )?;
+        published_previews.push(AgentComparePreviewResult {
+            role: (*role).to_owned(),
+            relative_path: (*relative_path).to_owned(),
+            descriptor,
+        });
+        entries.push(AtomicDirectoryEntry {
+            relative_path: Path::new(*relative_path),
+            bytes,
+            sha256: crate::sha256(bytes),
+        });
+    }
+    if !entries.is_empty() {
+        AtomicDirectoryWriter::replace(&output_dir, &entries)?;
+    }
+    let status = if outcome.all_required_passed {
+        AgentOperationStatus::Committed
+    } else {
+        AgentOperationStatus::Rejected
+    };
+    let receipt = AgentOperationReceipt {
+        schema: AGENT_RECEIPT_SCHEMA.to_owned(),
+        request_id: request.request_id.clone(),
+        operation: "compare".to_owned(),
+        status,
+        behavior_version: AGENT_BEHAVIOR_VERSION.to_owned(),
+        implementation_version: env!("CARGO_PKG_VERSION").to_owned(),
+        request_sha256: request_snapshot.sha256().to_owned(),
+        dependency_closure_sha256: dependency_closure_sha256(&dependencies)?,
+        dependencies,
+        output_sha256: None,
+        determinism: AgentDeterminismClass::BitExact,
+    };
+    serialize_json(
+        &AgentCompareResult {
+            schema: AGENT_COMPARE_RESULT_SCHEMA.to_owned(),
+            request_id: request.request_id,
+            status,
+            protocol_version: AGENT_PROTOCOL_VERSION.to_owned(),
+            behavior_version: AGENT_BEHAVIOR_VERSION.to_owned(),
+            all_required_passed: outcome.all_required_passed,
+            metrics: outcome.metrics,
+            assertions: outcome.assertions,
+            previews: published_previews,
+            receipt,
+        },
+        "<agent-compare>",
+    )
+}
+
+fn prepare_compare_assertion(
+    assertion: AgentCompareAssertionRequest,
+    masks: &mut Vec<Raster>,
+    dependencies: &mut Vec<AgentArtifactDependency>,
+    mask_paths: &mut Vec<PathBuf>,
+    mask_indices: &mut BTreeMap<String, (usize, u64)>,
+    decoded_pixels: &mut u64,
+    expected_dimensions: (u32, u32),
+) -> PpResult<CompareAssertion> {
+    let mut read_mask = |mask: AgentInputArtifact| -> PpResult<usize> {
+        if mask.kind != AgentArtifactKind::Mask
+            || mask.media_type != "image/png"
+            || mask.byte_length == 0
+            || mask.pixel_spec != AgentPixelSpec::rgba8_srgb_straight()
+            || mask.expected_sha256.len() != 64
+            || !mask
+                .expected_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(PpError::InvalidRequest(
+                "compare mask artifact metadata is invalid".to_owned(),
+            ));
+        }
+        let path = PathBuf::from(&mask.path);
+        if !path.is_absolute()
+            || path
+                .components()
+                .any(|component| component == Component::ParentDir)
+        {
+            return Err(PpError::InvalidRequest(
+                "compare mask path must be absolute and traversal-free".to_owned(),
+            ));
+        }
+        if let Some((index, byte_length)) = mask_indices.get(&mask.expected_sha256) {
+            if *byte_length != mask.byte_length {
+                return Err(PpError::InvalidRequest(
+                    "compare mask content identity has conflicting metadata".to_owned(),
+                ));
+            }
+            return Ok(*index);
+        }
+        let digest = mask.expected_sha256.clone();
+        let byte_length = mask.byte_length;
+        let (_bytes, raster, dependency) = read_agent_raster(&mask, AgentArtifactKind::Mask)?;
+        if (raster.width(), raster.height()) != expected_dimensions {
+            return Err(PpError::InvalidRequest(
+                "compare mask dimensions must match before/after".to_owned(),
+            ));
+        }
+        *decoded_pixels = decoded_pixels
+            .checked_add(u64::from(raster.width()) * u64::from(raster.height()))
+            .ok_or_else(|| {
+                PpError::InvalidRequest("compare decoded pixels overflowed".to_owned())
+            })?;
+        if *decoded_pixels > MAX_COMPARE_DECODED_PIXELS {
+            return Err(PpError::InvalidRequest(
+                "COMPARE_DECODED_PIXEL_BUDGET_EXCEEDED".to_owned(),
+            ));
+        }
+        let index = masks.len();
+        masks.push(raster);
+        dependencies.push(dependency);
+        mask_paths.push(path);
+        mask_indices.insert(digest, (index, byte_length));
+        Ok(index)
+    };
+    Ok(match assertion {
+        AgentCompareAssertionRequest::ExactEqual { id, severity } => {
+            CompareAssertion::ExactEqual { id, severity }
+        }
+        AgentCompareAssertionRequest::ChangedRatio {
+            id,
+            severity,
+            minimum,
+            maximum,
+        } => CompareAssertion::ChangedRatio {
+            id,
+            severity,
+            minimum,
+            maximum,
+        },
+        AgentCompareAssertionRequest::OutsideMaskChangedRatio {
+            id,
+            severity,
+            maximum,
+            mask,
+        } => CompareAssertion::OutsideMaskChangedRatio {
+            id,
+            severity,
+            maximum,
+            mask_index: read_mask(mask)?,
+        },
+        AgentCompareAssertionRequest::InsideMaskChangedRatio {
+            id,
+            severity,
+            minimum,
+            maximum,
+            mask,
+        } => CompareAssertion::InsideMaskChangedRatio {
+            id,
+            severity,
+            minimum,
+            maximum,
+            mask_index: read_mask(mask)?,
+        },
+        AgentCompareAssertionRequest::UnchangedRegionExact {
+            id,
+            severity,
+            region,
+        } => CompareAssertion::UnchangedRegionExact {
+            id,
+            severity,
+            region,
+        },
+        AgentCompareAssertionRequest::AlphaIou {
+            id,
+            severity,
+            minimum,
+            mask,
+        } => CompareAssertion::AlphaIou {
+            id,
+            severity,
+            minimum,
+            mask_index: read_mask(mask)?,
+        },
+        AgentCompareAssertionRequest::MaskLeakageRatio {
+            id,
+            severity,
+            maximum,
+            mask,
+        } => CompareAssertion::MaskLeakageRatio {
+            id,
+            severity,
+            maximum,
+            mask_index: read_mask(mask)?,
+        },
+        AgentCompareAssertionRequest::ObjectBounds {
+            id,
+            severity,
+            expected,
+            tolerance,
+        } => CompareAssertion::ObjectBounds {
+            id,
+            severity,
+            expected,
+            tolerance,
+        },
+        AgentCompareAssertionRequest::ObjectCentroid {
+            id,
+            severity,
+            expected,
+            tolerance,
+        } => CompareAssertion::ObjectCentroid {
+            id,
+            severity,
+            expected,
+            tolerance,
+        },
+        AgentCompareAssertionRequest::ObjectArea {
+            id,
+            severity,
+            expected,
+            tolerance,
+        } => CompareAssertion::ObjectArea {
+            id,
+            severity,
+            expected,
+            tolerance,
+        },
+        AgentCompareAssertionRequest::MaximumChannelError {
+            id,
+            severity,
+            maximum,
+        } => CompareAssertion::MaximumChannelError {
+            id,
+            severity,
+            maximum,
+        },
+        AgentCompareAssertionRequest::MeanAbsoluteError {
+            id,
+            severity,
+            maximum,
+        } => CompareAssertion::MeanAbsoluteError {
+            id,
+            severity,
+            maximum,
+        },
+    })
+}
+
+fn bounded_preview(raster: Raster, maximum_edge: u32) -> PpResult<Raster> {
+    let largest = raster.width().max(raster.height());
+    if largest <= maximum_edge {
+        return Ok(raster);
+    }
+    let width =
+        (u64::from(raster.width()) * u64::from(maximum_edge) / u64::from(largest)).max(1) as u32;
+    let height =
+        (u64::from(raster.height()) * u64::from(maximum_edge) / u64::from(largest)).max(1) as u32;
+    resize_raster(&raster, width, height, ResampleFilter::Nearest)
+}
+
+fn validate_agent_request_id(
+    schema: &str,
+    expected_schema: &str,
+    request_id: &str,
+) -> PpResult<()> {
+    if schema != expected_schema || request_id.trim().is_empty() || request_id.len() > 192 {
+        return Err(PpError::InvalidRequest(
+            "agent operation envelope is invalid".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_agent_output_dir(
+    request_path: &Path,
+    output_dir: &Path,
+    inputs: &[&Path],
+) -> PpResult<()> {
+    if !request_path.is_absolute()
+        || request_path
+            .components()
+            .any(|component| component == Component::ParentDir)
+        || !output_dir.is_absolute()
+        || output_dir
+            .components()
+            .any(|component| component == Component::ParentDir)
+    {
+        return Err(PpError::InvalidRequest(
+            "agent request/output paths must be absolute and traversal-free".to_owned(),
+        ));
+    }
+    match fs::metadata(output_dir) {
+        Ok(metadata) => {
+            if !metadata.is_dir() {
+                return Err(PpError::InvalidRequest(
+                    "agent output target must be a directory".to_owned(),
+                ));
+            }
+            if fs::read_dir(output_dir)
+                .map_err(|source| PpError::FileIo {
+                    path: output_dir.to_path_buf(),
+                    message: source.to_string(),
+                })?
+                .next()
+                .is_some()
+            {
+                return Err(PpError::InvalidRequest(
+                    "agent output directory must be new or empty".to_owned(),
+                ));
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(PpError::FileIo {
+                path: output_dir.to_path_buf(),
+                message: error.to_string(),
+            });
+        }
+    }
+    if request_path.starts_with(output_dir)
+        || inputs.iter().any(|path| path.starts_with(output_dir))
+    {
+        return Err(PpError::InvalidRequest(
+            "agent output directory must not contain the request or any input artifact".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn read_agent_raster(
+    input: &AgentInputArtifact,
+    expected_kind: AgentArtifactKind,
+) -> PpResult<(Vec<u8>, Raster, AgentArtifactDependency)> {
+    if input.kind != expected_kind {
+        return Err(PpError::InvalidRequest(
+            "agent input artifact kind is invalid".to_owned(),
+        ));
+    }
+    read_agent_raster_any(input)
+}
+
+fn read_agent_raster_any(
+    input: &AgentInputArtifact,
+) -> PpResult<(Vec<u8>, Raster, AgentArtifactDependency)> {
+    if input.media_type != "image/png" || input.byte_length == 0 {
+        return Err(PpError::InvalidRequest(
+            "agent raster input must be a non-empty image/png".to_owned(),
+        ));
+    }
+    if input.pixel_spec != AgentPixelSpec::rgba8_srgb_straight() {
+        return Err(PpError::InvalidRequest(
+            "agent raster pixelSpec must be rgba8/srgb/straight".to_owned(),
+        ));
+    }
+    let path = PathBuf::from(&input.path);
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|component| component == Component::ParentDir)
+    {
+        return Err(PpError::InvalidRequest(
+            "agent raster source path must be absolute and traversal-free".to_owned(),
+        ));
+    }
+    validate_raster_input_path(&path)?;
+    let (bytes, snapshot) = InputSnapshot::capture(&path, MAX_RASTER_READ_BYTES)?;
+    if u64::try_from(bytes.len()).ok() != Some(input.byte_length)
+        || snapshot.sha256() != input.expected_sha256
+    {
+        return Err(PpError::InvalidRequest(
+            "agent raster input changed or does not match its content address".to_owned(),
+        ));
+    }
+    let raster = ImageCodec::decode_rgba_bytes(&path, &bytes, DecodeLimits::default())?;
+    let dependency = AgentArtifactDependency {
+        sha256: input.expected_sha256.clone(),
+        media_type: input.media_type.clone(),
+        byte_length: input.byte_length,
+    };
+    Ok((bytes, raster, dependency))
+}
+
+fn read_agent_font(input: &AgentFontArtifact) -> PpResult<(Vec<u8>, AgentArtifactDependency)> {
+    let artifact = &input.artifact;
+    if artifact.id.trim().is_empty()
+        || artifact.id.len() > 160
+        || !artifact.id.starts_with("art-")
+        || artifact.media_type != "font/ttf" && artifact.media_type != "font/otf"
+        || artifact.sha256.len() != 64
+        || !artifact.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || artifact.byte_length == 0
+        || artifact.byte_length > MAX_FONT_READ_BYTES as u64
+        || artifact.relative_path.is_empty()
+        || artifact.relative_path.len() > 512
+        || artifact.relative_path.contains('\0')
+    {
+        return Err(PpError::InvalidRequest(
+            "agent font artifact metadata is invalid".to_owned(),
+        ));
+    }
+    let path = PathBuf::from(&input.path);
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|component| component == Component::ParentDir)
+        || !matches!(
+            path.extension()
+                .and_then(std::ffi::OsStr::to_str)
+                .map(str::to_ascii_lowercase)
+                .as_deref(),
+            Some("ttf") | Some("otf")
+        )
+    {
+        return Err(PpError::InvalidRequest(
+            "agent font path must be absolute, traversal-free, and use ttf or otf".to_owned(),
+        ));
+    }
+    let (bytes, snapshot) = InputSnapshot::capture(&path, MAX_FONT_READ_BYTES)?;
+    if u64::try_from(bytes.len()).ok() != Some(artifact.byte_length)
+        || snapshot.sha256() != artifact.sha256
+    {
+        return Err(PpError::InvalidRequest(
+            "agent font input changed or does not match its content address".to_owned(),
+        ));
+    }
+    Ok((
+        bytes,
+        AgentArtifactDependency {
+            sha256: artifact.sha256.clone(),
+            media_type: artifact.media_type.clone(),
+            byte_length: artifact.byte_length,
+        },
+    ))
+}
+
+fn agent_output_descriptor(
+    bytes: &[u8],
+    kind: AgentArtifactKind,
+    dependencies: Vec<AgentArtifactDependency>,
+) -> PpResult<AgentArtifactDescriptor> {
+    AgentArtifactDescriptor::new(
+        crate::sha256_hex(bytes),
+        "image/png".to_owned(),
+        u64::try_from(bytes.len())
+            .map_err(|_| PpError::InvalidRequest("artifact byte length overflowed".to_owned()))?,
+        kind,
+        Some(AgentPixelSpec::rgba8_srgb_straight()),
+        AgentArtifactRetention::TaskScoped,
+        dependencies,
+    )
 }
 
 fn inspect(args: &[String]) -> PpResult<String> {
@@ -3042,7 +4253,7 @@ struct PsdExportSummary {
     photoshop_native_open: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 enum EditStep {
     Crop {
@@ -3078,14 +4289,14 @@ enum EditStep {
     },
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum EditFlipAxis {
     Horizontal,
     Vertical,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum EditFilter {
     Nearest,
