@@ -76,9 +76,7 @@ pub struct OperationInputError {
 
 impl OperationInputError {
     pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-        }
+        Self { message: message.into() }
     }
 
     pub fn message(&self) -> &str {
@@ -93,6 +91,14 @@ impl std::fmt::Display for OperationInputError {
 }
 
 impl std::error::Error for OperationInputError {}
+
+pub fn parse_resample_filter(value: &str) -> Result<ResampleFilter, OperationInputError> {
+    match value {
+        "nearest" => Ok(ResampleFilter::Nearest),
+        "lanczos3" => Ok(ResampleFilter::Lanczos3),
+        _ => Err(OperationInputError::new("filter must be nearest or lanczos3")),
+    }
+}
 
 pub fn parse_vector_preset(value: &str) -> Result<VectorPresetSelection, OperationInputError> {
     match value {
@@ -138,18 +144,17 @@ pub fn parse_unit_score(value: &str) -> Result<UnitScore, OperationInputError> {
 }
 
 /// Single semantic command authority shared by transports. Paths identify requested I/O but no
-/// file is read while constructing this state. Request/policy reads belong to application Effects.
+/// file is read while constructing this state. Optional fields preserve whether the caller made an
+/// explicit choice when that presence itself changes validity (for example convert --filter).
 pub enum Operation {
     Schema,
-    Inspect {
-        input: PathBuf,
-    },
+    Inspect { input: PathBuf },
     Convert {
         input: PathBuf,
         output: PathBuf,
         width: Option<NonZeroU32>,
         height: Option<NonZeroU32>,
-        filter: ResampleFilter,
+        filter: Option<ResampleFilter>,
         jpeg_quality: Option<JpegQuality>,
         background: Option<[u8; 3]>,
     },
@@ -157,27 +162,15 @@ pub enum Operation {
         input: PathBuf,
         output: PathBuf,
         scale: ScaleFactor,
-        filter: ResampleFilter,
+        filter: Option<ResampleFilter>,
         jpeg_quality: Option<JpegQuality>,
         background: Option<[u8; 3]>,
     },
-    Edit {
-        request: PathBuf,
-    },
-    ExportPsd {
-        request: PathBuf,
-    },
-    ChromaPlan {
-        request: PathBuf,
-    },
-    NormalizeSprite {
-        request: PathBuf,
-        output_dir: PathBuf,
-    },
-    CompileSprite {
-        request: PathBuf,
-        output_dir: PathBuf,
-    },
+    Edit { request: PathBuf },
+    ExportPsd { request: PathBuf },
+    ChromaPlan { request: PathBuf },
+    NormalizeSprite { request: PathBuf, output_dir: PathBuf },
+    CompileSprite { request: PathBuf, output_dir: PathBuf },
     CompileVector {
         input: PathBuf,
         output: PathBuf,
@@ -198,14 +191,8 @@ pub enum Operation {
         policy: Option<PathBuf>,
         report: Option<PathBuf>,
     },
-    ScaffoldMotion {
-        input: PathBuf,
-        output_dir: PathBuf,
-    },
-    CompileMotion {
-        request: PathBuf,
-        output_dir: PathBuf,
-    },
+    ScaffoldMotion { input: PathBuf, output_dir: PathBuf },
+    CompileMotion { request: PathBuf, output_dir: PathBuf },
 }
 
 impl Operation {
@@ -236,14 +223,7 @@ const fn spec(
     timeout: Option<Duration>,
     capabilities: &'static [&'static str],
 ) -> OperationSpec {
-    OperationSpec {
-        name,
-        summary,
-        side_effect,
-        risk,
-        timeout,
-        capabilities,
-    }
+    OperationSpec { name, summary, side_effect, risk, timeout, capabilities }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -295,9 +275,7 @@ mod tests {
 
     #[test]
     fn operation_metadata_has_one_owner() {
-        let operation = Operation::Inspect {
-            input: "a.png".into(),
-        };
+        let operation = Operation::Inspect { input: "a.png".into() };
         let spec = operation.spec();
         assert_eq!(spec.name, "image.inspect");
         assert_eq!(spec.side_effect, SideEffectClass::Read);
@@ -306,7 +284,8 @@ mod tests {
     }
 
     #[test]
-    fn canonical_vector_parsers_reject_invalid_values() {
+    fn canonical_parsers_reject_invalid_values() {
+        assert!(parse_resample_filter("bilinear").is_err());
         assert!(parse_vector_preset("unknown").is_err());
         assert!(parse_vector_profile("unknown").is_err());
         assert!(parse_vector_detail("6").is_err());
