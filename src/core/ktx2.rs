@@ -103,17 +103,13 @@ pub fn inspect_ktx2(bytes: &[u8]) -> PpResult<Ktx2Info> {
             .ok_or_else(|| PpError::InvalidRequest(format!("KTX2 level {index} exceeds file")))?;
         let _ = end;
         if offset < level_index_end || (index > 0 && offset >= previous_offset) {
-            // KTX2 level index is ordered from largest level to smallest while byte payloads are
-            // conventionally stored smallest-to-largest; offsets therefore strictly decrease.
+            // Level Index is base-level first while a mip array is stored small-level first,
+            // therefore offsets strictly decrease as the index advances.
             return Err(PpError::InvalidRequest(
                 "KTX2 level payload ordering/offset is invalid".to_string(),
             ));
         }
-        if supercompression_scheme != 0 && uncompressed_length == 0 {
-            return Err(PpError::InvalidRequest(format!(
-                "supercompressed KTX2 level {index} lacks uncompressed byte length"
-            )));
-        }
+        validate_level_lengths(supercompression_scheme, length, uncompressed_length, index)?;
         previous_offset = offset;
     }
 
@@ -188,6 +184,31 @@ pub fn mip_level_count(width: u32, height: u32) -> u32 {
     u32::BITS - maximum.leading_zeros()
 }
 
+fn validate_level_lengths(
+    supercompression_scheme: u32,
+    byte_length: usize,
+    uncompressed_byte_length: usize,
+    index: usize,
+) -> PpResult<()> {
+    match supercompression_scheme {
+        // KTX 2.0.4 §3.9.7: without supercompression both values are identical.
+        0 if uncompressed_byte_length != byte_length => Err(PpError::InvalidRequest(format!(
+            "KTX2 level {index} uncompressed byte length must equal byte length without supercompression"
+        ))),
+        // KTX 2.0.4 §3.9.7 and §3.8: BasisLZ has no reflated-size value in the level index.
+        1 if uncompressed_byte_length != 0 => Err(PpError::InvalidRequest(format!(
+            "BasisLZ KTX2 level {index} uncompressed byte length must be zero"
+        ))),
+        // Zstd/Zlib and registered non-Basis schemes describe reflated byte length.
+        scheme if scheme != 0 && scheme != 1 && uncompressed_byte_length == 0 => {
+            Err(PpError::InvalidRequest(format!(
+                "supercompressed KTX2 level {index} for scheme {scheme} lacks uncompressed byte length"
+            )))
+        }
+        _ => Ok(()),
+    }
+}
+
 fn check_section(
     bytes: &[u8],
     offset: usize,
@@ -248,5 +269,15 @@ mod tests {
     #[test]
     fn invalid_identifier_fails_closed() {
         assert!(inspect_ktx2(&[0u8; 80]).is_err());
+    }
+
+    #[test]
+    fn level_lengths_follow_ktx_2_0_4_supercompression_contract() {
+        assert!(validate_level_lengths(0, 128, 128, 0).is_ok());
+        assert!(validate_level_lengths(0, 128, 0, 0).is_err());
+        assert!(validate_level_lengths(1, 64, 0, 0).is_ok());
+        assert!(validate_level_lengths(1, 64, 128, 0).is_err());
+        assert!(validate_level_lengths(2, 64, 128, 0).is_ok());
+        assert!(validate_level_lengths(3, 64, 0, 0).is_err());
     }
 }
