@@ -4,15 +4,16 @@ use std::{
 };
 
 use crate::{
-    JpegQuality, Operation, PpError, PpResult, ResampleFilter, ScaleFactor, SvgProfile, UnitScore,
-    VectorDetail, VectorPresetSelection,
+    parse_unit_score, parse_vector_detail, parse_vector_preset, parse_vector_profile, JpegQuality,
+    Operation, PpError, PpResult, ResampleFilter, ScaleFactor, SvgProfile, UnitScore,
+    VectorPresetSelection,
 };
 
-use super::{asset_codec::parse_background, cli_input::{parse_vector_preset, parse_vector_profile}};
+use super::asset_codec::parse_background;
 
 /// MCP transport DTO retained for protocol compatibility. It is not a semantic authority.
 /// Conversion to the canonical `Operation` is pure and performs all transport-independent scalar
-/// validation exactly once; no argv strings are reconstructed.
+/// validation exactly once; no argv strings are reconstructed and no file I/O occurs here.
 #[derive(Debug, Clone)]
 pub enum ApplicationRequest {
     Schema,
@@ -146,25 +147,28 @@ impl TryFrom<ApplicationRequest> for Operation {
                 preset: preset
                     .as_deref()
                     .map(parse_vector_preset)
-                    .transpose()?
+                    .transpose()
+                    .map_err(operation_input_error)?
                     .unwrap_or(VectorPresetSelection::Auto),
                 profile: profile
                     .as_deref()
                     .map(parse_vector_profile)
-                    .transpose()?
+                    .transpose()
+                    .map_err(operation_input_error)?
                     .unwrap_or(SvgProfile::Compact),
                 detail: detail
-                    .map(VectorDetail::new)
+                    .map(|value| parse_vector_detail(&value.to_string()))
                     .transpose()
-                    .map_err(|error| PpError::InvalidOption(error.to_string()))?,
+                    .map_err(operation_input_error)?
+                    .flatten(),
                 minimum_quality: min_quality
-                    .map(UnitScore::new)
+                    .map(|value| UnitScore::new(value).map_err(|error| error.to_string()))
                     .transpose()
-                    .map_err(|error| PpError::InvalidOption(error.to_string()))?,
+                    .map_err(|message| PpError::InvalidOption(message))?,
                 maximum_quality_loss: max_quality_loss
-                    .map(UnitScore::new)
+                    .map(|value| UnitScore::new(value).map_err(|error| error.to_string()))
                     .transpose()
-                    .map_err(|error| PpError::InvalidOption(error.to_string()))?,
+                    .map_err(|message| PpError::InvalidOption(message))?,
                 maximum_paths: max_paths
                     .map(|value| {
                         NonZeroUsize::new(value).ok_or_else(|| {
@@ -187,12 +191,14 @@ impl TryFrom<ApplicationRequest> for Operation {
                 preset: preset
                     .as_deref()
                     .map(parse_vector_preset)
-                    .transpose()?
+                    .transpose()
+                    .map_err(operation_input_error)?
                     .unwrap_or(VectorPresetSelection::Auto),
                 profile: profile
                     .as_deref()
                     .map(parse_vector_profile)
-                    .transpose()?
+                    .transpose()
+                    .map_err(operation_input_error)?
                     .unwrap_or(SvgProfile::Compact),
                 policy,
                 report,
@@ -226,7 +232,7 @@ fn optional_jpeg_quality(value: Option<u8>) -> PpResult<Option<JpegQuality>> {
     value
         .map(JpegQuality::new)
         .transpose()
-        .map_err(|error| PpError::InvalidOption(error.to_string()))
+        .map_err(operation_input_error)
 }
 
 fn parse_filter(raw: Option<&str>, default: ResampleFilter) -> PpResult<ResampleFilter> {
@@ -238,6 +244,10 @@ fn parse_filter(raw: Option<&str>, default: ResampleFilter) -> PpResult<Resample
             "--filter must be nearest or lanczos3".to_string(),
         )),
     }
+}
+
+fn operation_input_error(error: impl std::fmt::Display) -> PpError {
+    PpError::InvalidOption(error.to_string())
 }
 
 #[cfg(test)]
