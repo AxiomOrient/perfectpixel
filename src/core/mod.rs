@@ -10,6 +10,7 @@ mod document_composite;
 mod error;
 mod geometry;
 mod inspect;
+mod ktx2;
 mod pixel;
 mod psd;
 mod raster;
@@ -30,6 +31,7 @@ pub use document_composite::*;
 pub use error::*;
 pub use geometry::*;
 pub use inspect::*;
+pub use ktx2::*;
 pub use pixel::*;
 pub use psd::{
     encode_psd, PsdEncoded, PsdPathOptions, PSD_DEFAULT_ALPHA_THRESHOLD, PSD_DEFAULT_MAX_KNOTS,
