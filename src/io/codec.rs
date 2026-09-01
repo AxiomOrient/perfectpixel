@@ -1,9 +1,13 @@
 use std::io::Cursor;
 use std::path::Path;
 
-use image::{ImageReader, Limits as ImageLimits};
+use image::{DynamicImage, ExtendedColorType, ImageDecoder, ImageReader, Limits as ImageLimits};
 
-use crate::core::{PpError, PpResult, Raster};
+use crate::core::{
+    AlphaMode, ColorSpec, PixelFormat, PixelSpec, PpError, PpResult, Raster, Sha256Digest,
+};
+
+const MAX_ICC_PROFILE_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DecodeLimits {
@@ -42,13 +46,48 @@ impl Default for DecodeLimits {
     }
 }
 
+/// Decoded pixels plus the semantics that were actually observed at the codec boundary.
+/// Absence of an embedded profile remains `ColorSpec::Unknown`; it is never silently promoted to
+/// sRGB. `icc_profile` retains exact bytes so a color-management effect can consume the same
+/// profile whose digest appears in `pixel_spec`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodedRaster {
+    raster: Raster,
+    pixel_spec: PixelSpec,
+    icc_profile: Option<Vec<u8>>,
+}
+
+impl DecodedRaster {
+    pub fn raster(&self) -> &Raster {
+        &self.raster
+    }
+
+    pub fn into_raster(self) -> Raster {
+        self.raster
+    }
+
+    pub fn pixel_spec(&self) -> &PixelSpec {
+        &self.pixel_spec
+    }
+
+    pub fn icc_profile(&self) -> Option<&[u8]> {
+        self.icc_profile.as_deref()
+    }
+}
+
 pub struct ImageCodec;
 
 impl ImageCodec {
-    /// Decodes a path through one open reader. The previous implementation opened
-    /// the path once for dimensions and again for pixels, allowing two different
-    /// file revisions to participate in one decode.
+    /// Compatibility decoder for callers that only need canonical RGBA pixels. New correctness
+    /// sensitive paths should use `decode_rgba_with_metadata` so color provenance is not lost.
     pub fn decode_rgba(path: impl AsRef<Path>, limits: DecodeLimits) -> PpResult<Raster> {
+        Self::decode_rgba_with_metadata(path, limits).map(DecodedRaster::into_raster)
+    }
+
+    pub fn decode_rgba_with_metadata(
+        path: impl AsRef<Path>,
+        limits: DecodeLimits,
+    ) -> PpResult<DecodedRaster> {
         let path = path.as_ref();
         let reader = ImageReader::open(path).map_err(|source| PpError::FileIo {
             path: path.to_path_buf(),
@@ -58,13 +97,21 @@ impl ImageCodec {
     }
 
     /// Decodes the exact immutable byte snapshot supplied by an I/O adapter.
-    /// This is used by multi-file generation workflows so computation and the
-    /// publication precondition refer to the same source revision.
+    /// This is used by multi-file generation workflows so computation and the publication
+    /// precondition refer to the same source revision.
     pub fn decode_rgba_bytes(
         path: impl AsRef<Path>,
         bytes: &[u8],
         limits: DecodeLimits,
     ) -> PpResult<Raster> {
+        Self::decode_rgba_bytes_with_metadata(path, bytes, limits).map(DecodedRaster::into_raster)
+    }
+
+    pub fn decode_rgba_bytes_with_metadata(
+        path: impl AsRef<Path>,
+        bytes: &[u8],
+        limits: DecodeLimits,
+    ) -> PpResult<DecodedRaster> {
         let path = path.as_ref();
         decode_reader(path, ImageReader::new(Cursor::new(bytes)), limits)
     }
@@ -74,7 +121,7 @@ fn decode_reader<R: std::io::BufRead + std::io::Seek>(
     path: &Path,
     reader: ImageReader<R>,
     limits: DecodeLimits,
-) -> PpResult<Raster> {
+) -> PpResult<DecodedRaster> {
     let mut reader = reader
         .with_guessed_format()
         .map_err(|source| PpError::ImageDecode {
@@ -82,15 +129,69 @@ fn decode_reader<R: std::io::BufRead + std::io::Seek>(
             message: source.to_string(),
         })?;
     reader.limits(to_image_limits(limits));
-    let image = reader
-        .decode()
+
+    let mut decoder = reader
+        .into_decoder()
+        .map_err(|source| PpError::ImageDecode {
+            path: path.to_path_buf(),
+            message: source.to_string(),
+        })?;
+    let original_color_type = decoder.original_color_type();
+    let icc_profile = decoder.icc_profile().map_err(|source| PpError::ImageDecode {
+        path: path.to_path_buf(),
+        message: format!("ICC profile read failed: {source}"),
+    })?;
+    if icc_profile
+        .as_ref()
+        .is_some_and(|profile| profile.len() > MAX_ICC_PROFILE_BYTES)
+    {
+        return Err(PpError::InvalidRequest(format!(
+            "ICC profile exceeds {MAX_ICC_PROFILE_BYTES}-byte limit"
+        )));
+    }
+    let color = icc_profile
+        .as_ref()
+        .map(|profile| ColorSpec::Icc {
+            digest: Sha256Digest::from_bytes(profile),
+        })
+        .unwrap_or(ColorSpec::Unknown);
+    let alpha = if encoded_type_has_alpha(original_color_type) {
+        AlphaMode::Straight
+    } else {
+        AlphaMode::Opaque
+    };
+
+    let image = DynamicImage::from_decoder(decoder)
         .map_err(|source| PpError::ImageDecode {
             path: path.to_path_buf(),
             message: source.to_string(),
         })?
         .into_rgba8();
     limits.validate_path(path, image.width(), image.height())?;
-    Raster::new(image.width(), image.height(), image.into_raw())
+    let raster = Raster::new(image.width(), image.height(), image.into_raw())?;
+
+    Ok(DecodedRaster {
+        raster,
+        pixel_spec: PixelSpec::new(PixelFormat::Rgba8, alpha, color),
+        icc_profile,
+    })
+}
+
+fn encoded_type_has_alpha(color: ExtendedColorType) -> bool {
+    if let Some(color) = color.color_type() {
+        return color.has_alpha();
+    }
+    matches!(
+        color,
+        ExtendedColorType::A8
+            | ExtendedColorType::La1
+            | ExtendedColorType::Rgba1
+            | ExtendedColorType::La2
+            | ExtendedColorType::Rgba2
+            | ExtendedColorType::La4
+            | ExtendedColorType::Rgba4
+            | ExtendedColorType::Bgra8
+    )
 }
 
 fn to_image_limits(limits: DecodeLimits) -> ImageLimits {
