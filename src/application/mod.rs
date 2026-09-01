@@ -55,6 +55,12 @@ pub(crate) fn execute_operation(operation: Operation) -> ApplicationOutput {
     render_result(dispatch(operation, spec), spec.name, phase)
 }
 
+/// Renders a transport-normalized semantic input error through the same product error taxonomy as
+/// an executing Operation. Transport-specific root/protocol failures stay outside this boundary.
+pub(crate) fn execute_error(error: PpError, operation: &'static str) -> ApplicationOutput {
+    render_result(Err(error), operation, operation_phase(operation))
+}
+
 fn dispatch(operation: Operation, spec: OperationSpec) -> PpResult<String> {
     match operation {
         Operation::Schema => handlers::schema(),
@@ -182,6 +188,17 @@ mod tests {
         let output = execute_operation(Operation::Schema);
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("deterministic-asset-compiler"));
+    }
+
+    #[test]
+    fn semantic_error_rendering_preserves_operation() {
+        let output = execute_error(
+            PpError::InvalidOption("bad scalar".to_string()),
+            "image.convert",
+        );
+        let value: serde_json::Value = serde_json::from_str(output.stdout.trim()).expect("json");
+        assert_eq!(value["failure"]["operation"], "image.convert");
+        assert_eq!(value["failure"]["code"], "invalid_argument");
     }
 
     #[test]
