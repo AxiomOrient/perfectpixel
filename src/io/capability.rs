@@ -8,12 +8,9 @@ use std::path::{Component, Path};
 const CREATE_MODE: libc::mode_t = 0o600;
 const DIRECTORY_MODE: libc::mode_t = 0o755;
 
-/// Opens a regular filesystem object without following any symlink component.
-///
-/// This is the narrow Unix capability boundary used by publication and bounded
-/// reads. Resolution starts from an already-open `/` or cwd directory and every
-/// descendant component is resolved with `openat(O_NOFOLLOW)`, so validation and
-/// use are not separated by a pathname-following syscall.
+/// Opens a filesystem object without following any symlink component.
+/// Resolution starts from an already-open `/` or cwd directory and every
+/// descendant component is resolved with `openat(O_NOFOLLOW)`.
 pub(crate) fn open_read(path: &Path) -> io::Result<File> {
     let (parent, name) = open_parent(path, false)?;
     openat_file(
@@ -38,9 +35,9 @@ pub(crate) fn create_dir_all(path: &Path) -> io::Result<File> {
         match openat_directory(current.as_raw_fd(), &component) {
             Ok(next) => current = next,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                mkdirat(current.as_raw_fd(), &component)?;
-                current = openat_directory(current.as_raw_fd(), &component)?;
+                mkdirat(current.as_raw_fd(), &component, false)?;
                 sync_directory_handle(&current)?;
+                current = openat_directory(current.as_raw_fd(), &component)?;
             }
             Err(error) => return Err(error),
         }
@@ -48,9 +45,16 @@ pub(crate) fn create_dir_all(path: &Path) -> io::Result<File> {
     Ok(current)
 }
 
+pub(crate) fn create_directory_new(path: &Path) -> io::Result<File> {
+    let (parent, name) = open_parent(path, false)?;
+    mkdirat(parent.as_raw_fd(), &name, true)?;
+    sync_directory_handle(&parent)?;
+    openat_directory(parent.as_raw_fd(), &name)
+}
+
 pub(crate) fn create_new(path: &Path) -> io::Result<File> {
     let (parent, name) = open_parent(path, true)?;
-    openat_file(
+    let file = openat_file(
         parent.as_raw_fd(),
         &name,
         libc::O_WRONLY
@@ -58,6 +62,17 @@ pub(crate) fn create_new(path: &Path) -> io::Result<File> {
             | libc::O_EXCL
             | libc::O_NOFOLLOW
             | libc::O_CLOEXEC,
+        CREATE_MODE,
+    )?;
+    Ok(file)
+}
+
+pub(crate) fn open_lock(path: &Path) -> io::Result<File> {
+    let (parent, name) = open_parent(path, true)?;
+    openat_file(
+        parent.as_raw_fd(),
+        &name,
+        libc::O_RDWR | libc::O_CREAT | libc::O_NOFOLLOW | libc::O_CLOEXEC,
         CREATE_MODE,
     )
 }
@@ -79,16 +94,21 @@ pub(crate) fn rename(from: &Path, to: &Path) -> io::Result<()> {
         return Err(io::Error::last_os_error());
     }
     sync_directory_handle(&from_parent)?;
-    if from_parent.as_raw_fd() != to_parent.as_raw_fd() {
-        sync_directory_handle(&to_parent)?;
-    }
-    Ok(())
+    sync_directory_handle(&to_parent)
 }
 
 pub(crate) fn remove_file(path: &Path) -> io::Result<()> {
+    unlinkat(path, 0)
+}
+
+pub(crate) fn remove_directory(path: &Path) -> io::Result<()> {
+    unlinkat(path, libc::AT_REMOVEDIR)
+}
+
+fn unlinkat(path: &Path, flags: libc::c_int) -> io::Result<()> {
     let (parent, name) = open_parent(path, false)?;
     let name = c_string(&name)?;
-    let result = unsafe { libc::unlinkat(parent.as_raw_fd(), name.as_ptr(), 0) };
+    let result = unsafe { libc::unlinkat(parent.as_raw_fd(), name.as_ptr(), flags) };
     if result != 0 {
         return Err(io::Error::last_os_error());
     }
@@ -122,7 +142,7 @@ pub(crate) fn read_bounded(path: &Path, limit: usize) -> io::Result<Vec<u8>> {
 
 /// Synchronizes file contents and metadata to the strongest primitive exposed by
 /// the supported platform. On macOS/iOS, `fsync` alone may return before the
-/// device has accepted the data; `F_FULLFSYNC` closes that durability gap.
+/// storage device has accepted the data; `F_FULLFSYNC` closes that gap.
 pub(crate) fn sync_file_durable(file: &File) -> io::Result<()> {
     file.sync_all()?;
     #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -147,9 +167,12 @@ fn sync_directory_handle(directory: &File) -> io::Result<()> {
 fn open_parent(path: &Path, create_parent: bool) -> io::Result<(File, OsString)> {
     let file_name = path
         .file_name()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path must name a file"))?
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path must name an entry"))?
         .to_os_string();
-    let parent = path.parent().filter(|value| !value.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+    let parent = path
+        .parent()
+        .filter(|value| !value.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
     let directory = if create_parent {
         create_dir_all(parent)?
     } else {
@@ -165,6 +188,8 @@ fn anchor_and_components(path: &Path) -> io::Result<(File, Vec<OsString>)> {
         match component {
             Component::RootDir | Component::CurDir => {}
             Component::Normal(value) => components.push(value.to_os_string()),
+            // Parent traversal is valid for ambient CLI paths. It remains
+            // descriptor-relative and cannot be replaced by a symlink during use.
             Component::ParentDir => components.push(OsString::from("..")),
             Component::Prefix(_) => {
                 return Err(io::Error::new(
@@ -187,7 +212,12 @@ fn openat_directory(parent: RawFd, name: &OsStr) -> io::Result<File> {
     )
 }
 
-fn openat_file(parent: RawFd, name: &OsStr, flags: libc::c_int, mode: libc::mode_t) -> io::Result<File> {
+fn openat_file(
+    parent: RawFd,
+    name: &OsStr,
+    flags: libc::c_int,
+    mode: libc::mode_t,
+) -> io::Result<File> {
     let name = c_string(name)?;
     let fd = unsafe { libc::openat(parent, name.as_ptr(), flags, mode) };
     if fd < 0 {
@@ -196,12 +226,12 @@ fn openat_file(parent: RawFd, name: &OsStr, flags: libc::c_int, mode: libc::mode
     Ok(unsafe { File::from_raw_fd(fd) })
 }
 
-fn mkdirat(parent: RawFd, name: &OsStr) -> io::Result<()> {
+fn mkdirat(parent: RawFd, name: &OsStr, exclusive: bool) -> io::Result<()> {
     let name = c_string(name)?;
     let result = unsafe { libc::mkdirat(parent, name.as_ptr(), DIRECTORY_MODE) };
     if result != 0 {
         let error = io::Error::last_os_error();
-        if error.kind() != io::ErrorKind::AlreadyExists {
+        if !(error.kind() == io::ErrorKind::AlreadyExists && !exclusive) {
             return Err(error);
         }
     }
@@ -226,7 +256,10 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
-        std::env::temp_dir().join(format!("perfectpixel-capability-{label}-{}-{stamp}", std::process::id()))
+        std::env::temp_dir().join(format!(
+            "perfectpixel-capability-{label}-{}-{stamp}",
+            std::process::id()
+        ))
     }
 
     #[test]
