@@ -79,19 +79,22 @@ pub(super) fn schema() -> PpResult<String> {
                 RequestCompilerSchema {
                     command: "document-psd",
                     operation: "document.compile_psd",
-                    request_schema: "perfectpixel.document-psd-compile/2",
+                    result_schema: "perfectpixel.document-psd-compile/2",
+                    request_contract: "strict typed JSON: schemaVersion=2, canonical operation name, unknown fields rejected",
                     publication: "single checked atomic PSD",
                 },
                 RequestCompilerSchema {
                     command: "texture-compile",
                     operation: "texture.compile",
-                    request_schema: "perfectpixel.texture-compile/1",
+                    result_schema: "perfectpixel.texture-compile/1",
+                    request_contract: "strict typed JSON: schemaVersion=1, canonical operation name, unknown fields rejected",
                     publication: "single checked atomic KTX2",
                 },
                 RequestCompilerSchema {
                     command: "vision-foreground-instances",
                     operation: "vision.apple.foreground_instances",
-                    request_schema: "perfectpixel.vision-foreground-instances-request/1",
+                    result_schema: "perfectpixel.vision-foreground-instances/1",
+                    request_contract: "strict typed JSON: schemaVersion=1, canonical operation name, requestRevision=1, unknown fields rejected",
                     publication: "checked atomic artifact-set directory",
                 },
             ],
@@ -284,7 +287,8 @@ struct SchemaPayload {
 struct RequestCompilerSchema {
     command: &'static str,
     operation: &'static str,
-    request_schema: &'static str,
+    result_schema: &'static str,
+    request_contract: &'static str,
     publication: &'static str,
 }
 
