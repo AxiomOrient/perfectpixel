@@ -1,5 +1,4 @@
 use std::{
-    fs,
     path::{Component, Path, PathBuf},
     time::Duration,
 };
@@ -15,7 +14,7 @@ use crate::{
     PpError, PpResult, Sha256Digest,
 };
 
-const MAX_CANDIDATE_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_CANDIDATE_BYTES: usize = 128 * 1024 * 1024;
 const PROCESS_EVIDENCE_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,7 +46,9 @@ impl KtxEncoding {
     fn cli_value(self) -> &'static str {
         match self {
             Self::BasisLz => "basis-lz",
-            Self::Uastc => "uastc",
+            // `uastc` remains accepted by KTX-Software but is a deprecated alias.
+            // Receipts digest arguments, so use the canonical stable spelling.
+            Self::Uastc => "uastc-ldr-4x4",
         }
     }
 }
@@ -305,7 +306,6 @@ fn execute_candidate_effect(
     let spec = ProcessSpec {
         executable: executable.clone(),
         args: args.clone(),
-        current_dir: None,
         environment: vec![
             ("LANG".to_string(), "C".to_string()),
             ("LC_ALL".to_string(), "C".to_string()),
@@ -418,45 +418,6 @@ fn validate_effect_paths(input: &Path, staging_output: &Path) -> PpResult<()> {
             "external Effect staging output must not overwrite input".to_string(),
         ));
     }
-    let canonical_input = fs::canonicalize(input).map_err(|error| PpError::FileIo {
-        path: input.to_path_buf(),
-        message: error.to_string(),
-    })?;
-    let input_metadata = fs::symlink_metadata(&canonical_input).map_err(|error| PpError::FileIo {
-        path: canonical_input,
-        message: error.to_string(),
-    })?;
-    if input_metadata.file_type().is_symlink() || !input_metadata.is_file() {
-        return Err(PpError::InvalidRequest(
-            "external Effect input must resolve to a regular file".to_string(),
-        ));
-    }
-    match fs::symlink_metadata(staging_output) {
-        Ok(_) => {
-            return Err(PpError::InvalidRequest(
-                "external Effect staging output must not already exist".to_string(),
-            ));
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(PpError::FileIo {
-                path: staging_output.to_path_buf(),
-                message: error.to_string(),
-            });
-        }
-    }
-    let parent = staging_output.parent().ok_or_else(|| {
-        PpError::InvalidRequest("external Effect staging output has no parent".to_string())
-    })?;
-    let parent_metadata = fs::symlink_metadata(parent).map_err(|error| PpError::FileIo {
-        path: parent.to_path_buf(),
-        message: error.to_string(),
-    })?;
-    if parent_metadata.file_type().is_symlink() || !parent_metadata.is_dir() {
-        return Err(PpError::InvalidRequest(
-            "external Effect staging parent must be a regular non-symlink directory".to_string(),
-        ));
-    }
     if staging_output
         .components()
         .any(|component| matches!(component, Component::ParentDir))
@@ -465,32 +426,66 @@ fn validate_effect_paths(input: &Path, staging_output: &Path) -> PpResult<()> {
             "external Effect staging output must not contain '..'".to_string(),
         ));
     }
+
+    let input_file = crate::io::capability::open_read(input).map_err(|error| PpError::FileIo {
+        path: input.to_path_buf(),
+        message: error.to_string(),
+    })?;
+    if !input_file
+        .metadata()
+        .map_err(|error| PpError::FileIo {
+            path: input.to_path_buf(),
+            message: error.to_string(),
+        })?
+        .is_file()
+    {
+        return Err(PpError::InvalidRequest(
+            "external Effect input must be a regular no-follow file".to_string(),
+        ));
+    }
+
+    let parent = staging_output.parent().ok_or_else(|| {
+        PpError::InvalidRequest("external Effect staging output has no parent".to_string())
+    })?;
+    crate::io::capability::open_directory(parent).map_err(|error| PpError::FileIo {
+        path: parent.to_path_buf(),
+        message: error.to_string(),
+    })?;
+
+    // Fail closed for any existing entry. The external tool itself is a pathname
+    // Effect, so PerfectPixel never treats its output as trusted; the candidate is
+    // reopened through the capability boundary and verified before publication.
+    match crate::io::capability::open_read(staging_output) {
+        Ok(_) => {
+            return Err(PpError::InvalidRequest(
+                "external Effect staging output must not already exist".to_string(),
+            ))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            if crate::io::capability::open_directory(staging_output).is_ok() {
+                return Err(PpError::InvalidRequest(
+                    "external Effect staging output must not already exist".to_string(),
+                ));
+            }
+            return Err(PpError::InvalidRequest(format!(
+                "external Effect staging output is not an absent regular path: {error}"
+            )));
+        }
+    }
     Ok(())
 }
 
 fn read_candidate(path: &Path) -> PpResult<Vec<u8>> {
-    let metadata = fs::symlink_metadata(path).map_err(|error| PpError::FileIo {
-        path: path.to_path_buf(),
-        message: error.to_string(),
+    let bytes = crate::io::capability::read_bounded(path, MAX_CANDIDATE_BYTES).map_err(|error| {
+        PpError::FileIo {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        }
     })?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
+    if bytes.is_empty() {
         return Err(PpError::InvalidRequest(
-            "external Effect candidate must be a regular non-symlink file".to_string(),
-        ));
-    }
-    if metadata.len() == 0 || metadata.len() > MAX_CANDIDATE_BYTES {
-        return Err(PpError::InvalidRequest(format!(
-            "external Effect candidate size {} is outside 1..={MAX_CANDIDATE_BYTES}",
-            metadata.len()
-        )));
-    }
-    let bytes = fs::read(path).map_err(|error| PpError::FileIo {
-        path: path.to_path_buf(),
-        message: error.to_string(),
-    })?;
-    if bytes.len() as u64 != metadata.len() {
-        return Err(PpError::InvalidRequest(
-            "external Effect candidate changed while being read".to_string(),
+            "external Effect candidate must not be empty".to_string(),
         ));
     }
     Ok(bytes)
@@ -568,8 +563,11 @@ mod tests {
             true,
         );
         assert!(args.windows(2).any(|pair| pair == ["--threads", "1"]));
-        assert!(args.iter().any(|value| value == "--fail-on-color-conversions"));
+        assert!(args
+            .iter()
+            .any(|value| value == "--fail-on-color-conversions"));
         assert!(args.iter().any(|value| value == "--generate-mipmap"));
+        assert!(args.iter().any(|value| value == "uastc-ldr-4x4"));
     }
 
     #[test]
