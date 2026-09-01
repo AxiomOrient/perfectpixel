@@ -83,6 +83,8 @@ pub struct ProcessSpec {
     pub executable: PinnedExecutable,
     pub args: Vec<String>,
     pub current_dir: Option<PathBuf>,
+    /// The process inherits no ambient environment. Every required variable is explicit here.
+    pub environment: Vec<(String, String)>,
     pub timeout: Duration,
     pub max_stdout_bytes: usize,
     pub max_stderr_bytes: usize,
@@ -103,6 +105,16 @@ impl ProcessSpec {
         if self.args.iter().any(|argument| argument.contains('\0')) {
             return Err(ProcessRunError::InvalidRequest(
                 "external process argument contains NUL".to_string(),
+            ));
+        }
+        if self.environment.iter().any(|(key, value)| {
+            key.is_empty()
+                || key.contains('=')
+                || key.contains('\0')
+                || value.contains('\0')
+        }) {
+            return Err(ProcessRunError::InvalidRequest(
+                "external process environment contains an invalid key or NUL".to_string(),
             ));
         }
         if let Some(current_dir) = &self.current_dir {
@@ -198,6 +210,8 @@ pub fn run_process(
     let mut command = Command::new(spec.executable.path());
     command
         .args(&spec.args)
+        .env_clear()
+        .envs(spec.environment.iter().map(|(key, value)| (key, value)))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -314,6 +328,12 @@ mod tests {
         let (kept, truncated) = read_bounded_to_eof(&input[..], 16).expect("read");
         assert_eq!(kept.len(), 16);
         assert!(truncated);
+    }
+
+    #[test]
+    fn process_spec_rejects_ambient_or_malformed_environment_state() {
+        let invalid = vec![("A=B".to_string(), "value".to_string())];
+        assert!(invalid.iter().any(|(key, _)| key.contains('=')));
     }
 
     #[test]
