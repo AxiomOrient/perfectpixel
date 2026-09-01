@@ -4,8 +4,9 @@ use std::{
 };
 
 use crate::{
-    parse_vector_detail, parse_vector_preset, parse_vector_profile, JpegQuality, Operation, PpError,
-    PpResult, ResampleFilter, ScaleFactor, SvgProfile, UnitScore, VectorPresetSelection,
+    parse_resample_filter, parse_vector_detail, parse_vector_preset, parse_vector_profile,
+    JpegQuality, Operation, PpError, PpResult, ScaleFactor, SvgProfile, UnitScore,
+    VectorPresetSelection,
 };
 
 use super::asset_codec::parse_background;
@@ -72,7 +73,11 @@ impl TryFrom<ApplicationRequest> for Operation {
                 output,
                 width: optional_nonzero(width, "width")?,
                 height: optional_nonzero(height, "height")?,
-                filter: parse_filter(filter.as_deref(), ResampleFilter::Lanczos3)?,
+                filter: filter
+                    .as_deref()
+                    .map(parse_resample_filter)
+                    .transpose()
+                    .map_err(operation_input_error)?,
                 jpeg_quality: optional_jpeg_quality(jpeg_quality)?,
                 background: background.as_deref().map(parse_background).transpose()?,
             },
@@ -80,7 +85,11 @@ impl TryFrom<ApplicationRequest> for Operation {
                 input,
                 output,
                 scale: ScaleFactor::new(scale).map_err(operation_input_error)?,
-                filter: parse_filter(filter.as_deref(), ResampleFilter::Nearest)?,
+                filter: filter
+                    .as_deref()
+                    .map(parse_resample_filter)
+                    .transpose()
+                    .map_err(operation_input_error)?,
                 jpeg_quality: optional_jpeg_quality(jpeg_quality)?,
                 background: background.as_deref().map(parse_background).transpose()?,
             },
@@ -157,15 +166,6 @@ fn optional_jpeg_quality(value: Option<u8>) -> PpResult<Option<JpegQuality>> {
     value.map(JpegQuality::new).transpose().map_err(operation_input_error)
 }
 
-fn parse_filter(raw: Option<&str>, default: ResampleFilter) -> PpResult<ResampleFilter> {
-    match raw {
-        None => Ok(default),
-        Some("nearest") => Ok(ResampleFilter::Nearest),
-        Some("lanczos3") => Ok(ResampleFilter::Lanczos3),
-        Some(_) => Err(PpError::InvalidOption("--filter must be nearest or lanczos3".to_string())),
-    }
-}
-
 fn operation_input_error(error: impl std::fmt::Display) -> PpError {
     PpError::InvalidOption(error.to_string())
 }
@@ -173,6 +173,7 @@ fn operation_input_error(error: impl std::fmt::Display) -> PpError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ResampleFilter;
 
     #[test]
     fn transport_request_converts_without_argv_roundtrip() -> PpResult<()> {
@@ -183,7 +184,7 @@ mod tests {
         match operation {
             Operation::Convert { width, filter, .. } => {
                 assert_eq!(width.map(NonZeroU32::get), Some(64));
-                assert_eq!(filter, ResampleFilter::Nearest);
+                assert_eq!(filter, Some(ResampleFilter::Nearest));
             }
             _ => panic!("wrong operation"),
         }
