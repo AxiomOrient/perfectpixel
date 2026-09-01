@@ -50,7 +50,7 @@ fn pixel_spec_requires_explicit_alpha_and_color_semantics() -> Result<(), Box<dy
 #[test]
 fn exact_verification_is_machine_readable_and_fails_closed() -> Result<(), Box<dyn std::error::Error>> {
     let raster = Raster::new(2, 1, vec![255, 0, 0, 255, 0, 0, 0, 0])?;
-    let pixel_spec = PixelSpec::rgba8_srgb_straight();
+    let pixel_spec = PixelSpec::new(PixelFormat::Rgba8, AlphaMode::Straight, ColorSpec::Unknown);
     let expected_digest = Sha256Digest::from_bytes(b"expected-output");
     let spec = VerificationSpec {
         exact: vec![
