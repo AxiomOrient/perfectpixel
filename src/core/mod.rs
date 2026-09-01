@@ -1,6 +1,7 @@
 mod alpha;
 mod artifact;
 mod chroma;
+mod color;
 mod composite;
 mod error;
 mod geometry;
@@ -16,6 +17,7 @@ mod verify;
 pub use alpha::*;
 pub use artifact::*;
 pub use chroma::*;
+pub use color::*;
 pub use composite::*;
 pub use error::*;
 pub use geometry::*;
