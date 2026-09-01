@@ -1,4 +1,3 @@
-#[path = "artifact_set_clean.rs"]
 mod artifact_set;
 mod atomic;
 pub(crate) mod capability;
