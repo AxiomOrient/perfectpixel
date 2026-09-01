@@ -1,41 +1,25 @@
 # Third-party notices
 
-This source publication uses the direct Rust dependencies declared in
-[`Cargo.toml`](Cargo.toml). The versions below are the versions selected by
-[`Cargo.lock`](Cargo.lock); the SPDX expressions are the `license` values
-reported by `cargo metadata --locked` for those lock-selected package
-manifests. This is factual attribution, not a legal conclusion.
-
-Only direct entries under `[dependencies]` are listed. Cargo.lock also records
-transitive and build-time packages needed to compile the source; they are not
-direct dependencies and are not repeated here. Consult the lock file and each
-package's upstream metadata for that complete resolved graph.
+PerfectPixel keeps the direct Rust dependency surface intentionally small. The canonical dependency declaration is [`Cargo.toml`](Cargo.toml); [`Cargo.lock`](Cargo.lock) is the resolved graph used by `--locked` local verification.
 
 ## Direct Rust dependencies
 
-| Component | Cargo.toml requirement | Cargo.lock version | SPDX license expression |
-| --- | --- | --- | --- |
-| `binpack2d` | `=1.0.1` | `1.0.1` | `MIT` |
-| `fast_image_resize` | `=6.1.0` | `6.1.0` | `MIT OR Apache-2.0` |
-| `image` | `0.25` | `0.25.10` | `MIT OR Apache-2.0` |
-| `serde` | `1` | `1.0.228` | `MIT OR Apache-2.0` |
-| `serde_json` | `1` | `1.0.150` | `MIT OR Apache-2.0` |
-| `schemars` | `1` | `1.2.2` | `MIT OR Apache-2.0` |
-| `svgtypes` | `=0.16.1` | `0.16.1` | `Apache-2.0 OR MIT` |
-| `thiserror` | `1` | `1.0.69` | `MIT OR Apache-2.0` |
-| `resvg` | `0.47` | `0.47.0` | `Apache-2.0 OR MIT` |
-| `roxmltree` | `=0.21.1` | `0.21.1` | `MIT OR Apache-2.0` |
-| `rmcp` | `=3.1.4` | `3.1.4` | `Apache-2.0` |
-| `tokio` | `1` | `1.53.1` | `MIT OR Apache-2.0` |
+| Component | Cargo.toml requirement | Purpose |
+| --- | --- | --- |
+| `base64` | `0.22` | bounded binary metadata encoding |
+| `image` | `0.25` | PNG/JPEG/WebP decode and encode boundary |
+| `libc` | `0.2` | Unix process/runtime primitives |
+| `resvg` | `0.47` | SVG parse/render verification |
+| `rmcp` | `3.1.4` | typed local stdio MCP transport |
+| `schemars` | `1.0` | MCP/request schema generation |
+| `serde` | `1` | typed serialization |
+| `serde_json` | `1` | strict JSON contracts and receipts |
+| `tokio` | `1` | MCP/runtime async boundary |
 
-The feature selections and `default-features` settings remain exactly those in
-`Cargo.toml`; this table does not imply any additional features. A bare version
-in the requirement column is Cargo's implicit caret requirement.
+`moxcms` and `fast-ssim2` are not direct dependencies. Embedded ICC provenance is retained and fails closed at the transform boundary in this minimal build; perceptual verification uses the in-repository CIEDE2000 implementation plus exact/alpha/geometry/region gates.
+
+Transitive packages remain recorded by Cargo.lock and may include implementation dependencies of the direct crates. A transitive package is not a PerfectPixel semantic authority.
 
 ## Source-only publication limits
 
-This repository publishes the Rust source, manifests, lockfile, tests, and
-documentation. It does not publish `target/` output or generated asset files.
-Build and runtime evidence therefore depends on the operator's local Rust
-toolchain; this notice does not assert that environment-specific evidence is
-included here.
+This repository publishes source, manifests, lockfile, tests, documentation, and the Apple Vision helper source. It does not claim local build/runtime evidence unless that evidence was produced by the verifying host.
