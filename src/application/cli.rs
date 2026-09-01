@@ -36,15 +36,20 @@ pub(super) fn parse(args: &[String]) -> PpResult<CliInput> {
         "upscale" => parse_upscale(&args[1..]),
         "edit" => one_request(&args[1..], |request| Operation::Edit { request }),
         "psd" => one_request(&args[1..], |request| Operation::ExportPsd { request }),
+        "document-psd" => one_request(&args[1..], |request| Operation::CompileDocumentPsd { request }),
         "chroma-plan" => one_request(&args[1..], |request| Operation::ChromaPlan { request }),
         "normalize" => parse_request_directory(&args[1..], true),
         "bundle" => parse_request_directory(&args[1..], false),
+        "texture-compile" => one_request(&args[1..], |request| Operation::CompileTexture { request }),
         "vector" => parse_vector(&args[1..]),
         "vector-analyze" => parse_vector_analyze(&args[1..]),
+        "vision-foreground-instances" => one_request(&args[1..], |request| {
+            Operation::AppleVisionForegroundInstances { request }
+        }),
         "motion-scaffold" => parse_motion_scaffold(&args[1..]),
         "motion-build" => parse_motion_build(&args[1..]),
         other => Err(PpError::InvalidOption(format!(
-            "unknown command '{other}'; use schema, inspect, convert, upscale, edit, psd, chroma-plan, vector, vector-analyze, normalize, bundle, motion-scaffold, or motion-build"
+            "unknown command '{other}'; use schema, inspect, convert, upscale, edit, psd, document-psd, chroma-plan, vector, vector-analyze, normalize, bundle, texture-compile, vision-foreground-instances, motion-scaffold, or motion-build"
         ))),
     }
 }
@@ -303,5 +308,22 @@ mod tests {
             "upscale", "a.png", "--out", "b.png", "--scale", "1"
         ]))
         .is_err());
+    }
+
+    #[test]
+    fn request_driven_compilers_are_thin_operation_adapters() -> PpResult<()> {
+        let cases = [
+            ("document-psd", "document.compile_psd"),
+            ("texture-compile", "texture.compile"),
+            ("vision-foreground-instances", "vision.apple.foreground_instances"),
+        ];
+        for (command, expected) in cases {
+            let parsed = parse(&args(&[command, "--request", "request.json"]))?;
+            let CliInput::Operation(operation) = parsed else {
+                panic!("expected operation");
+            };
+            assert_eq!(operation.spec().name, expected);
+        }
+        Ok(())
     }
 }
