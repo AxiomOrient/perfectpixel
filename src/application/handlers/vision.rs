@@ -26,10 +26,12 @@ use super::super::{
 const OPERATION: &str = "vision.apple.foreground_instances";
 const RESPONSE_SCHEMA: &str = "perfectpixel.vision-foreground-instances/1";
 const MANIFEST_SCHEMA: &str = "perfectpixel.vision-foreground-instances-manifest/1";
-const EFFECT_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_INSTANCES: usize = 63;
 
-pub(super) fn foreground_instances(request_path: PathBuf) -> PpResult<String> {
+pub(super) fn foreground_instances(
+    request_path: PathBuf,
+    effect_timeout: Duration,
+) -> PpResult<String> {
     validate_file_extension(&request_path, &["json"], "Apple Vision request")?;
     let request_guard = FilePrecondition::capture(&request_path)?;
     let (request, _snapshot): (VisionRequest, _) = read_json_request_snapshot(&request_path)?;
@@ -49,7 +51,8 @@ pub(super) fn foreground_instances(request_path: PathBuf) -> PpResult<String> {
     let input_guard = FilePrecondition::capture(&input)?;
     let output_guard = DirectoryPrecondition::capture(&output_directory)?;
     let input_bytes = read_bytes_limited(&input, MAX_RASTER_READ_BYTES)?;
-    let observed_input = ArtifactRef::from_bytes(request.input.artifact.media_type(), &input_bytes)?;
+    let observed_input =
+        ArtifactRef::from_bytes(request.input.artifact.media_type(), &input_bytes)?;
     if observed_input != request.input.artifact {
         return Err(PpError::PreconditionFailed {
             operation: OPERATION.to_string(),
@@ -87,7 +90,7 @@ pub(super) fn foreground_instances(request_path: PathBuf) -> PpResult<String> {
             input: absolute(&input)?,
             staging_directory: absolute(&staging_directory)?,
             request_revision: request.request_revision,
-            timeout: EFFECT_TIMEOUT,
+            timeout: effect_timeout,
         },
         &CancellationFlag::default(),
     );
