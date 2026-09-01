@@ -6,8 +6,6 @@ use super::Sha256Digest;
 #[serde(rename_all = "snake_case")]
 pub enum PixelFormat {
     Rgba8,
-    Rgba16,
-    RgbaF32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,16 +35,12 @@ pub struct PixelSpec {
 }
 
 impl PixelSpec {
-    pub const fn new(pixel_format: PixelFormat, alpha: AlphaMode, color: ColorSpec) -> Self {
+    pub fn new(pixel_format: PixelFormat, alpha: AlphaMode, color: ColorSpec) -> Self {
         Self {
             pixel_format,
             alpha,
             color,
         }
-    }
-
-    pub const fn rgba8_srgb_straight() -> Self {
-        Self::new(PixelFormat::Rgba8, AlphaMode::Straight, ColorSpec::Srgb)
     }
 }
 
@@ -55,10 +49,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pixel_spec_has_no_implicit_default() {
-        let spec = PixelSpec::rgba8_srgb_straight();
+    fn pixel_spec_requires_explicit_color_semantics() {
+        let spec = PixelSpec::new(PixelFormat::Rgba8, AlphaMode::Straight, ColorSpec::Unknown);
         assert_eq!(spec.pixel_format, PixelFormat::Rgba8);
         assert_eq!(spec.alpha, AlphaMode::Straight);
-        assert_eq!(spec.color, ColorSpec::Srgb);
+        assert_eq!(spec.color, ColorSpec::Unknown);
     }
 }
