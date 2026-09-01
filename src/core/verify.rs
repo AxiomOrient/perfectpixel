@@ -1,6 +1,3 @@
-use fast_ssim2::{
-    compute_ssimulacra2_with_config, srgb_u8_to_linear, LinearRgbImage, Ssimulacra2Config,
-};
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -8,9 +5,8 @@ use super::{
     Sha256Digest,
 };
 
-pub const VERIFICATION_REPORT_SCHEMA: &str = "perfectpixel.verification-report/3";
+pub const VERIFICATION_REPORT_SCHEMA: &str = "perfectpixel.verification-report/4";
 const MAX_SRGB_DELTA_E_MILLI: usize = 200_000;
-const SSIMULACRA2_IDENTICAL_MILLI: i32 = 100_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -75,13 +71,6 @@ impl VerificationSpec {
                 PerceptualAssertion::DeltaE2000 { thresholds } => {
                     validate_delta_thresholds(*thresholds)?;
                 }
-                PerceptualAssertion::Ssimulacra2 { minimum_milli } => {
-                    if *minimum_milli > SSIMULACRA2_IDENTICAL_MILLI {
-                        return Err(PpError::InvalidRequest(
-                            "SSIMULACRA2 minimumMilli must not exceed 100000".to_string(),
-                        ));
-                    }
-                }
             }
         }
         for assertion in &self.regions {
@@ -128,7 +117,7 @@ pub enum ExactAssertion {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DeltaEThresholds {
-    /// ΔE00 * 1000. A value of 1500 means ΔE00 <= 1.5.
+    /// CIEDE2000 ΔE00 multiplied by 1000. `1500` means ΔE00 <= 1.5.
     pub mean_milli_max: u32,
     pub p95_milli_max: u32,
     pub max_milli_max: u32,
@@ -141,16 +130,11 @@ pub enum PerceptualAssertion {
         #[serde(flatten)]
         thresholds: DeltaEThresholds,
     },
-    /// Minimum accepted SSIMULACRA2 score multiplied by 1000.
-    /// 90000 means a score of at least 90.0. This assertion is never a standalone scalar gate:
-    /// dimensions and alpha support must also agree.
-    Ssimulacra2 { minimum_milli: i32 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RegionAssertion {
-    /// Candidate and reference RGBA bytes must match exactly inside `rect`.
     ExactRgba { rect: FrameRect },
     AlphaBounds {
         rect: FrameRect,
@@ -228,14 +212,6 @@ pub enum PerceptualEvidence {
         compared_pixels: u64,
         alpha_support_mismatch_pixels: u64,
     },
-    Ssimulacra2 {
-        /// Conservative score: min(black-background score, white-background score) * 1000.
-        score_milli: i32,
-        black_score_milli: i32,
-        white_score_milli: i32,
-        alpha_support_mismatch_pixels: u64,
-        implementation: &'static str,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -279,7 +255,7 @@ pub fn verify_raster_exact(
 ) -> PpResult<VerificationReport> {
     if !spec.perceptual.is_empty() || !spec.regions.is_empty() {
         return Err(PpError::InvalidRequest(
-            "verify_raster_exact accepts only exact assertions; use verify_raster for reference/region assertions"
+            "verify_raster_exact accepts exact assertions only; use verify_raster for reference/region assertions"
                 .to_string(),
         ));
     }
@@ -338,10 +314,7 @@ pub fn verify_raster(
                     ExactEvidence::ConnectedComponentCount { actual: count },
                 )
             }
-            ExactAssertion::ContentBounds {
-                threshold,
-                expected,
-            } => {
+            ExactAssertion::ContentBounds { threshold, expected } => {
                 let actual = mask.bounding_box(*threshold);
                 (
                     actual == *expected,
@@ -417,21 +390,6 @@ fn evaluate_perceptual(
                 },
             })
         }
-        PerceptualAssertion::Ssimulacra2 { minimum_milli } => {
-            let metrics = ssimulacra2_metrics(actual, reference)?;
-            Ok(PerceptualCheck {
-                assertion: assertion.clone(),
-                passed: metrics.alpha_support_mismatch_pixels == 0
-                    && metrics.score_milli >= *minimum_milli,
-                evidence: PerceptualEvidence::Ssimulacra2 {
-                    score_milli: metrics.score_milli,
-                    black_score_milli: metrics.black_score_milli,
-                    white_score_milli: metrics.white_score_milli,
-                    alpha_support_mismatch_pixels: metrics.alpha_support_mismatch_pixels,
-                    implementation: "fast-ssim2/simd",
-                },
-            })
-        }
     }
 }
 
@@ -452,9 +410,7 @@ fn evaluate_region(
         });
     }
     match assertion {
-        RegionAssertion::AlphaBounds {
-            minimum, maximum, ..
-        } => {
+        RegionAssertion::AlphaBounds { minimum, maximum, .. } => {
             let (actual_minimum, actual_maximum) = alpha_bounds(actual, Some(rect))?;
             Ok(RegionCheck {
                 assertion: assertion.clone(),
@@ -483,7 +439,8 @@ fn evaluate_region(
                     },
                 });
             }
-            let (compared_pixels, mismatch_pixels) = exact_region_mismatches(actual, reference, rect);
+            let (compared_pixels, mismatch_pixels) =
+                exact_region_mismatches(actual, reference, rect);
             Ok(RegionCheck {
                 assertion: assertion.clone(),
                 passed: mismatch_pixels == 0,
@@ -551,77 +508,6 @@ fn delta_e_passes(metrics: &DeltaEMetrics, thresholds: DeltaEThresholds) -> bool
         && metrics.mean_milli <= thresholds.mean_milli_max
         && metrics.p95_milli <= thresholds.p95_milli_max
         && metrics.max_milli <= thresholds.max_milli_max
-}
-
-struct Ssimulacra2Metrics {
-    score_milli: i32,
-    black_score_milli: i32,
-    white_score_milli: i32,
-    alpha_support_mismatch_pixels: u64,
-}
-
-fn ssimulacra2_metrics(actual: &Raster, reference: &Raster) -> PpResult<Ssimulacra2Metrics> {
-    let alpha_support_mismatch_pixels = actual
-        .pixels()
-        .chunks_exact(4)
-        .zip(reference.pixels().chunks_exact(4))
-        .filter(|(actual, reference)| (actual[3] == 0) != (reference[3] == 0))
-        .count() as u64;
-
-    let black_score = compute_ssimulacra2_with_config(
-        alpha_composited_linear(reference, false)?,
-        alpha_composited_linear(actual, false)?,
-        Ssimulacra2Config::simd(),
-    )
-    .map_err(|error| PpError::InvalidRequest(format!("SSIMULACRA2 failed: {error}")))?;
-    let white_score = compute_ssimulacra2_with_config(
-        alpha_composited_linear(reference, true)?,
-        alpha_composited_linear(actual, true)?,
-        Ssimulacra2Config::simd(),
-    )
-    .map_err(|error| PpError::InvalidRequest(format!("SSIMULACRA2 failed: {error}")))?;
-    if !black_score.is_finite() || !white_score.is_finite() {
-        return Err(PpError::InvalidRequest(
-            "SSIMULACRA2 produced a non-finite score".to_string(),
-        ));
-    }
-    let black_score_milli = score_to_milli(black_score);
-    let white_score_milli = score_to_milli(white_score);
-    Ok(Ssimulacra2Metrics {
-        score_milli: black_score_milli.min(white_score_milli),
-        black_score_milli,
-        white_score_milli,
-        alpha_support_mismatch_pixels,
-    })
-}
-
-fn alpha_composited_linear(raster: &Raster, white: bool) -> PpResult<LinearRgbImage> {
-    let background = if white { 1.0f32 } else { 0.0f32 };
-    let data = raster
-        .pixels()
-        .chunks_exact(4)
-        .map(|pixel| {
-            let alpha = f32::from(pixel[3]) / 255.0;
-            let inverse = 1.0 - alpha;
-            [
-                srgb_u8_to_linear(pixel[0]) * alpha + background * inverse,
-                srgb_u8_to_linear(pixel[1]) * alpha + background * inverse,
-                srgb_u8_to_linear(pixel[2]) * alpha + background * inverse,
-            ]
-        })
-        .collect::<Vec<_>>();
-    let width = usize::try_from(raster.width())
-        .map_err(|_| PpError::InvalidRequest("SSIMULACRA2 width overflow".to_string()))?;
-    let height = usize::try_from(raster.height())
-        .map_err(|_| PpError::InvalidRequest("SSIMULACRA2 height overflow".to_string()))?;
-    LinearRgbImage::try_new(data, width, height)
-        .map_err(|error| PpError::InvalidRequest(format!("SSIMULACRA2 input invalid: {error}")))
-}
-
-fn score_to_milli(score: f64) -> i32 {
-    (score * 1000.0)
-        .round()
-        .clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32
 }
 
 fn delta_e_metrics(
@@ -728,8 +614,14 @@ fn alpha_bounds(raster: &Raster, rect: Option<FrameRect>) -> PpResult<(u8, u8)> 
 fn rect_fits(raster: &Raster, rect: FrameRect) -> bool {
     rect.w != 0
         && rect.h != 0
-        && rect.x.checked_add(rect.w).is_some_and(|right| right <= raster.width())
-        && rect.y.checked_add(rect.h).is_some_and(|bottom| bottom <= raster.height())
+        && rect
+            .x
+            .checked_add(rect.w)
+            .is_some_and(|right| right <= raster.width())
+        && rect
+            .y
+            .checked_add(rect.h)
+            .is_some_and(|bottom| bottom <= raster.height())
 }
 
 fn rgba_at(raster: &Raster, x: u32, y: u32) -> [u8; 4] {
@@ -773,9 +665,16 @@ mod tests {
         let artifact = ArtifactRef::from_bytes("image/png", b"encoded")?;
         let spec = exact_spec(vec![
             ExactAssertion::Dimensions { width: 2, height: 1 },
-            ExactAssertion::PixelSpec { expected: pixel_spec.clone() },
-            ExactAssertion::AlphaBounds { minimum: 0, maximum: 255 },
-            ExactAssertion::ArtifactSha256 { expected: artifact.sha256().clone() },
+            ExactAssertion::PixelSpec {
+                expected: pixel_spec.clone(),
+            },
+            ExactAssertion::AlphaBounds {
+                minimum: 0,
+                maximum: 255,
+            },
+            ExactAssertion::ArtifactSha256 {
+                expected: artifact.sha256().clone(),
+            },
         ]);
         let report = verify_raster_exact(&spec, &raster, &pixel_spec, Some(&artifact))?;
         assert!(report.ok);
@@ -787,7 +686,62 @@ mod tests {
     fn verification_rejects_vacuous_success() -> crate::PpResult<()> {
         let raster = Raster::blank(1, 1)?;
         let pixel_spec = PixelSpec::new(PixelFormat::Rgba8, AlphaMode::Straight, ColorSpec::Unknown);
-        assert!(verify_raster(&VerificationSpec::default(), &raster, &pixel_spec, None, None).is_err());
+        assert!(verify_raster(
+            &VerificationSpec::default(),
+            &raster,
+            &pixel_spec,
+            None,
+            None
+        )
+        .is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn delta_e_identical_is_machine_readable() -> crate::PpResult<()> {
+        let raster = Raster::new(2, 1, vec![10, 20, 30, 255, 40, 50, 60, 255])?;
+        let pixel_spec = PixelSpec::new(PixelFormat::Rgba8, AlphaMode::Opaque, ColorSpec::Srgb);
+        let spec = VerificationSpec {
+            exact: vec![ExactAssertion::Dimensions {
+                width: 2,
+                height: 1,
+            }],
+            perceptual: vec![PerceptualAssertion::DeltaE2000 {
+                thresholds: DeltaEThresholds {
+                    mean_milli_max: 0,
+                    p95_milli_max: 0,
+                    max_milli_max: 0,
+                },
+            }],
+            regions: Vec::new(),
+        };
+        let report = verify_raster(&spec, &raster, &pixel_spec, None, Some(&raster))?;
+        assert!(report.ok);
+        assert!(matches!(
+            report.perceptual[0].evidence,
+            PerceptualEvidence::DeltaE2000 { max_milli: 0, .. }
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn delta_e_requires_alpha_support_to_match() -> crate::PpResult<()> {
+        let actual = Raster::new(1, 1, vec![255, 0, 0, 0])?;
+        let reference = Raster::new(1, 1, vec![255, 0, 0, 255])?;
+        let pixel_spec = PixelSpec::new(PixelFormat::Rgba8, AlphaMode::Straight, ColorSpec::Srgb);
+        let spec = VerificationSpec {
+            exact: Vec::new(),
+            perceptual: vec![PerceptualAssertion::DeltaE2000 {
+                thresholds: DeltaEThresholds {
+                    mean_milli_max: 0,
+                    p95_milli_max: 0,
+                    max_milli_max: 0,
+                },
+            }],
+            regions: Vec::new(),
+        };
+        let report = verify_raster(&spec, &actual, &pixel_spec, None, Some(&reference))?;
+        assert!(!report.ok);
         Ok(())
     }
 
@@ -800,77 +754,28 @@ mod tests {
             exact: Vec::new(),
             perceptual: Vec::new(),
             regions: vec![
-                RegionAssertion::ExactRgba { rect: FrameRect { x: 0, y: 0, w: 1, h: 1 } },
-                RegionAssertion::AlphaBounds { rect: FrameRect { x: 1, y: 0, w: 1, h: 1 }, minimum: 0, maximum: 0 },
+                RegionAssertion::ExactRgba {
+                    rect: FrameRect {
+                        x: 0,
+                        y: 0,
+                        w: 1,
+                        h: 1,
+                    },
+                },
+                RegionAssertion::AlphaBounds {
+                    rect: FrameRect {
+                        x: 1,
+                        y: 0,
+                        w: 1,
+                        h: 1,
+                    },
+                    minimum: 0,
+                    maximum: 0,
+                },
             ],
         };
         let report = verify_raster(&spec, &actual, &pixel_spec, None, Some(&reference))?;
         assert!(report.ok);
-        Ok(())
-    }
-
-    #[test]
-    fn delta_e_requires_alpha_support_to_match() -> crate::PpResult<()> {
-        let actual = Raster::new(1, 1, vec![255, 0, 0, 0])?;
-        let reference = Raster::new(1, 1, vec![255, 0, 0, 255])?;
-        let pixel_spec = PixelSpec::new(PixelFormat::Rgba8, AlphaMode::Straight, ColorSpec::Srgb);
-        let spec = VerificationSpec {
-            exact: Vec::new(),
-            perceptual: vec![PerceptualAssertion::DeltaE2000 {
-                thresholds: DeltaEThresholds { mean_milli_max: 0, p95_milli_max: 0, max_milli_max: 0 },
-            }],
-            regions: Vec::new(),
-        };
-        let report = verify_raster(&spec, &actual, &pixel_spec, None, Some(&reference))?;
-        assert!(!report.ok);
-        Ok(())
-    }
-
-    #[test]
-    fn ssimulacra2_identical_rgba_is_machine_readable() -> crate::PpResult<()> {
-        let raster = Raster::new(
-            8,
-            8,
-            (0..64)
-                .flat_map(|index| [index as u8, 128, 255u8.saturating_sub(index as u8), if index % 3 == 0 { 127 } else { 255 }])
-                .collect(),
-        )?;
-        let pixel_spec = PixelSpec::new(PixelFormat::Rgba8, AlphaMode::Straight, ColorSpec::Srgb);
-        let spec = VerificationSpec {
-            exact: vec![ExactAssertion::Dimensions { width: 8, height: 8 }],
-            perceptual: vec![PerceptualAssertion::Ssimulacra2 { minimum_milli: 99_999 }],
-            regions: Vec::new(),
-        };
-        let report = verify_raster(&spec, &raster, &pixel_spec, None, Some(&raster))?;
-        assert!(report.ok);
-        assert!(matches!(
-            report.perceptual[0].evidence,
-            PerceptualEvidence::Ssimulacra2 { implementation: "fast-ssim2/simd", .. }
-        ));
-        Ok(())
-    }
-
-    #[test]
-    fn ssimulacra2_rejects_alpha_support_drift_even_if_rgb_matches() -> crate::PpResult<()> {
-        let mut actual_pixels = vec![64u8; 8 * 8 * 4];
-        let mut reference_pixels = actual_pixels.clone();
-        for pixel in actual_pixels.chunks_exact_mut(4) {
-            pixel[3] = 255;
-        }
-        for pixel in reference_pixels.chunks_exact_mut(4) {
-            pixel[3] = 255;
-        }
-        actual_pixels[3] = 0;
-        let actual = Raster::new(8, 8, actual_pixels)?;
-        let reference = Raster::new(8, 8, reference_pixels)?;
-        let pixel_spec = PixelSpec::new(PixelFormat::Rgba8, AlphaMode::Straight, ColorSpec::Srgb);
-        let spec = VerificationSpec {
-            exact: Vec::new(),
-            perceptual: vec![PerceptualAssertion::Ssimulacra2 { minimum_milli: -1_000_000 }],
-            regions: Vec::new(),
-        };
-        let report = verify_raster(&spec, &actual, &pixel_spec, None, Some(&reference))?;
-        assert!(!report.ok);
         Ok(())
     }
 }
