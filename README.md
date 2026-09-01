@@ -1,192 +1,156 @@
-# perfectpixel
+# PerfectPixel
 
-`perfectpixel` is a deterministic asset compiler for AI-generated or authored local assets.
-Its `perfectpixel` binary finalizes images: it decodes and encodes local files, inspects
-rasters, normalizes sprite inputs, builds sprite atlases, publishes quality-gated SVG, and
-creates bounded transform/opacity motion artifacts from raster-free SVG. It does not generate
-images or run AI models.
-[The product contract](docs/CONTRACT.md) is the user-facing behavior record; the CLI schema,
-implementation, and tests are the executable source of truth.
+PerfectPixel is a deterministic local image asset compiler for AI-generated or authored assets. It inspects, transforms, normalizes, packs, vectorizes, and builds motion artifacts with explicit contracts, quality gates, and atomic publication.
 
-The platform contract is Rust `cfg(unix)` only: Windows and every non-Unix target fail at
-compilation. The complete runtime gate is verified on macOS arm64.
+## Product boundary
 
-Everything runs locally from a checkout — there is no packaging, publishing, or distribution
-step. The complete verification gate is the fmt, clippy, and test sequence in
-[Verification](#verification).
+PerfectPixel finalizes local assets. It does not generate images, call remote models, or require a network connection. The product exposes a human CLI and a typed local stdio MCP adapter over the same application semantics.
 
-Source publication is limited to the Rust source, manifests, lockfile, tests, and documentation;
-it does not include `target/` output or generated asset files. See [Third-party notices](THIRD_PARTY_NOTICES.md)
-for direct dependency versions and license expressions.
+## Core capabilities
 
-## Scope
+- raster inspection with exact input SHA-256 evidence
+- deterministic PNG/JPEG/WebP conversion and resizing
+- bounded deterministic raster edit requests
+- controlled chroma background planning
+- PSD export with soft alpha plus bounded vector path resources
+- sprite normalization and deterministic MaxRects atlas compilation
+- quality-gated raster-to-SVG vectorization and analysis
+- SVG motion scaffolding and deterministic motion artifact generation
+- atomic single-file, directory, and multi-artifact publication
+- local stdio MCP adapter with a fixed root boundary
 
-| Capability | Input | Result | Boundary |
-| --- | --- | --- | --- |
-| `inspect` | PNG, JPG, JPEG, or WebP | Versioned raster facts, exact input SHA-256/byte count, alpha/color facts, and a bounded edge palette as JSON | Numeric inspection only; writes nothing and does not expose pixels to a model. |
-| `convert` | PNG, JPG, JPEG, or WebP | PNG, JPEG, or lossless WebP plus input/output digests | JPEG transparency requires an explicit background color. |
-| `upscale` | PNG, JPG, JPEG, or WebP | PNG, JPEG, or lossless WebP plus input/output digests | Independent interpolation resize; defaults to pixel-safe nearest neighbor. |
-| `edit` | Strict JSON request and one raster | Atomically published RGBA PNG plus strict evidence | Sequential crop, quarter-turn rotate, flip, nearest/Lanczos3 resize, explicit edge-connected background removal, and controlled auto-key removal for flat/chroma edges. |
-| `psd` | Strict JSON request and one raster | Flattened PSD v1 with RGBA planes and Photoshop path resources | Deterministic 8-bit RGB PSD, soft alpha preserved in the raster, hard-edge even-odd contours in Working/Cutout paths; native Photoshop UI opening is not proven on this host. |
-| `chroma-plan` | Strict JSON request with 1–32 subject RGB colors | Versioned candidate palette and OKLab maximin evidence | Fixed high-saturation palette with deterministic RGB tie-break; no semantic segmentation or photo matting. |
-| `normalize` | JSON request and raster frames or a strip | Quality report and, on success, bundle-ready frames/request | Source paths are request-relative. |
-| `bundle` | Sprite request and frame images | PerfectPixel v3 manifest, atlas pages, Aseprite JSON, copied frames | Manages only files declared by the bundle manifest. |
-| `vector` | One raster and an SVG destination | An SVG only after an approved evaluation | `vector` is the sole raster-to-SVG quality-gated publication command. |
-| `vector-analyze` | One raster | Candidate-free route/profile evidence | Never writes SVG or diagnostics. |
-| `motion-scaffold` / `motion-build` | Supported raster-free SVG / motion request | Scene parts, animated SVG, Lottie JSON, dotLottie v2 layout | `motion-build` may publish derived `animated.svg` from an accepted raster-free SVG source; no semantic part inference or packed `.lottie` archive. |
-| `perfectpixel-mcp` | Fixed-root MCP stdio calls | The same ten product commands as typed MCP tools | Local stdio only; fixed root, no network, shell passthrough, or generic runner. |
+## CLI
 
-The CLI makes no service, account, credential, network, UI-shell, gallery, or CI call
-while it compiles assets; no network is required. When a browser opens the `preview.html` generated by
-`motion-build`, it optionally imports dotLottie Web from jsDelivr; the local animated-SVG
-preview remains available if that external player cannot load. The compiler does not perform
-automatic semantic segmentation, path morphing, bones/IK, physics, or texture compression.
-
-## Install and inspect the surface
-
-A Rust toolchain with Cargo is required to build the product.
-
-```bash
-cargo build --release --locked
-cargo install --path . --locked
+```text
 perfectpixel schema
-perfectpixel --help
+perfectpixel inspect <input.png|jpg|jpeg|webp>
+perfectpixel convert <input> --out <output> [--width N] [--height N] [--filter nearest|lanczos3]
+perfectpixel upscale <input> --out <output> --scale N [--filter nearest|lanczos3]
+perfectpixel edit --request <edit-request.json>
+perfectpixel psd --request <psd-export-request.json>
+perfectpixel chroma-plan --request <chroma-plan-request.json>
+perfectpixel vector <input> --out <output.svg> [options]
+perfectpixel vector-analyze <input> [options]
+perfectpixel normalize --request <normalize-request.json> --out-dir <dir>
+perfectpixel bundle --request <sprite-request.json> --out-dir <dir>
+perfectpixel motion-scaffold <input.svg> --out-dir <dir>
+perfectpixel motion-build --request <motion-request.json> --out-dir <dir>
 ```
 
-From a checkout, use `cargo run --locked --bin perfectpixel -- <command>` instead of an
-installed binary when developing.
+Run `perfectpixel --help` for the complete request examples and `perfectpixel schema` for the machine-readable capability surface.
 
-## Local MCP adapter
+## MCP
 
-With an existing `asset-root` directory, run the typed local MCP adapter with:
-
-```bash
-cargo run --locked --bin perfectpixel-mcp -- --root "$(pwd)/asset-root"
+```text
+perfectpixel-mcp --root /absolute/non-symlink/workspace
 ```
 
-The root stays fixed and canonical for the process. Static traversal/symlink checks and resource
-limits apply to this trusted-local boundary. The tool inventory, path rules, result envelope,
-busy/cancellation semantics, and unsupported surfaces are normative in
-[MCP_CONTRACT.md](docs/MCP_CONTRACT.md).
+The MCP server exposes the supported typed operations under one fixed root. It does not use MCP Roots notifications to widen that boundary. See [MCP contract](docs/MCP_CONTRACT.md).
 
-## Primary flow
+## Architecture
 
-```bash
-# 1. Inspect a source raster.
-perfectpixel inspect art/input.png
+The implementation keeps domain computation separate from I/O and publication:
 
-# 2. Convert, resize, or pixel-art upscale through the asset adapter.
-perfectpixel convert art/input.png --out art/output.webp --width 1024 --filter lanczos3
-perfectpixel upscale sprites/idle.png --out sprites/idle@2x.png --scale 2
-
-# 3. Apply deterministic post-generation edits (no semantic AI claims).
-perfectpixel edit --request image-edit-request.json
-
-# 4. Export a flattened PSD with a deterministic alpha-derived path.
-perfectpixel psd --request image-psd-request.json
-
-# 5. Plan a controlled chroma key when the subject colors are known.
-perfectpixel chroma-plan --request chroma-plan-request.json
-
-# 6. Normalize generated sprite frames, then build the generated request.
-perfectpixel normalize --request normalize-request.json --out-dir normalized
-perfectpixel bundle --request normalized/sprite-request.json --out-dir bundle
-
-# 7. Generate SVG only for an explicitly supported family that passes its gates.
-perfectpixel vector icon.png --out icon.svg --preset flat-icon --profile compact
-
-# 8. Scaffold and build bounded motion from a supported raster-free SVG.
-perfectpixel motion-scaffold icon.svg --out-dir motion
-perfectpixel motion-build --request motion/motion-request.json --out-dir motion
+```text
+CLI / MCP
+   │
+   ▼
+application boundary
+   │
+   ├─ bounded immutable input snapshots
+   ├─ deterministic domain/compiler work
+   ├─ quality / contract evaluation
+   └─ atomic publication
+        │
+        ▼
+core / vector / sprite / motion
 ```
 
-`vector --preset auto` may abstain and require an explicit family. A rejection is a
-normal result: it does not publish a final SVG. Use `vector-analyze` when route and
-profile evidence is needed without candidate generation.
+The detailed authority map and residual boundaries are documented in [Architecture](docs/ARCHITECTURE.md).
 
-The PSD request requires `schemaVersion: 1`, `operation: "export_psd"`, raster `input`,
-`.psd` `output`, and explicit `path.alphaThreshold` (`1..=255`) plus `path.maxKnots`
-(`1..=32768`). The exporter preserves all RGBA bytes as four raw planar channels and
-derives bounded hard-edge contours from alpha at the requested threshold. It writes Adobe
-resources 1025 (Working Path), 2000 (Cutout Path), and 2999 (clipping-path name, flatness,
-and even-odd fill rule). It is flattened: there are no Photoshop layers or PSB features,
-and Photoshop-native opening/UI verification is an environment boundary rather than a
-claim of the local test suite.
+## Asset conversion
 
-## Request defaults that differ by command
+Raster input is PNG, JPEG, or WebP. Output may be PNG, JPEG, or lossless WebP.
 
-`normalize` and `bundle` deliberately do not use the same state defaults:
+- PNG and WebP preserve RGBA.
+- JPEG rejects transparency unless an explicit `--background #RRGGBB` matte is supplied.
+- `convert` defaults to Lanczos3 when resizing.
+- `upscale` defaults to nearest-neighbor and requires an integer scale of at least 2.
+- output publication is atomic and refuses input/output collisions.
 
-| Request | Optional defaults | Required state fields |
-| --- | --- | --- |
-| `normalize-request.json` | `sheetImage: "sprite-sheet.png"`, `fps: 8`, `loop: true`, default packing | `name` and exactly one of `frames` or `strip` + `frameCount` |
-| `sprite-request.json` | `sheetImage: "sprite-sheet.png"`, default packing | `name`, `fps` (1–1000), `loop`, and `frames` |
+## Image edit
 
-Both request types and their nested objects reject unknown fields. They also reject absolute
-paths, `..`, NUL bytes, and backslash separators for PNG/JPG/JPEG/WebP raster source paths.
-`fit.alignY` accepts only `bottom`; `logicalHeight` and `pitchHint` require
-`fit.pixelPerfect: true`. Numeric normalization policy is finite and explicitly bounded.
+`edit` accepts one bounded JSON request. Supported operations are crop, quarter-turn rotate, horizontal/vertical flip, resize, exact keyed background removal, and deterministic edge-derived automatic background removal.
 
-For every field, validation rule, output schema, and failure code, use
-[CONTRACT.md](docs/CONTRACT.md) rather than this overview.
-
-## Output ownership and failures
-
-`normalize`, `bundle`, `motion-scaffold`, and `motion-build` compute from immutable input byte
-snapshots. The publisher rechecks each input before mutation and before durable commit. It acquires
-an output-root OS lock, recovers an interrupted journal, resolves `.perfectpixel-generation.json`,
-stages the complete next managed set, and snapshots previous managed files. Journal schema `/2`
-records each rollback backup's path, byte count, and SHA-256. Crash recovery verifies and durably
-restages the complete backup set before changing any output, then restores or removes each touched
-path once while retaining the immutable backups for retry. A failed precondition aborts before
-mutation or rolls the whole set back; corrupt backup evidence and unsupported journal `/1` fail
-closed. A root without `.perfectpixel-generation.json` does not auto-adopt existing generated
-outputs; use a clean output directory for first publication. There is no migration shim.
-Stale files are removed only while their recorded byte count and SHA-256 still match, unrelated
-files are preserved, and `motion-scaffold` explicitly invalidates the previous `motion-build`
-generation. Vector diagnostics use the same lock and journal `/2` implementation as an exact managed
-file set; stale files and now-empty managed parents are removed transactionally. A zero-file set
-still runs both publication guards around empty-root creation, and a newly created root is removed
-when the final guard fails. Standalone empty subdirectories and file-to-directory path-shape
-conversions are rejected rather than assigned implicit ownership.
-
-Single-file output uses a same-directory temporary file, file sync, atomic rename, and parent-directory
-sync. Rename is the visible commit point: an error before rename preserves the previous destination;
-a parent-directory sync error is returned explicitly after the new file may already be visible. For
-journaled sets, `installed.json` is the terminal commit evidence. If its rename is visible but its
-parent sync cannot be confirmed, the writer does not roll committed bytes back: it returns an explicit
-uncertain-durability error and retains the transaction for the next locked recovery. Failure to clean
-a durably committed transaction is also returned explicitly without rolling the generation back. No
-directory-sync or cleanup failure is silently treated as success.
-
-All command failures are JSON on stdout. Exit codes and the vector transaction order are
-part of [the contract](docs/CONTRACT.md#failure-contract), not a promise that arbitrary
-input will be accepted.
-
-## GitHub Pages deployment
-
-The public project page is served by GitHub Pages from the `main` branch's `/docs` directory using
-GitHub's legacy Pages source. This repository contains no Pages or CI workflow; updating
-`docs/index.html` and pushing to `main` is the publication input. The local compiler and its locked
-verification gate do not prove that the hosted page has rebuilt. Check the hosted deployment with:
-
-```bash
-gh api repos/AxiomOrient/perfectpixel/pages --jq '{status,build_type,source,html_url,https_enforced}'
-gh api repos/AxiomOrient/perfectpixel/pages/builds/latest --jq '{status,created_at,updated_at,error,error_message}'
+```json
+{
+  "schemaVersion": 1,
+  "operation": "edit",
+  "input": "source.png",
+  "output": "edited.png",
+  "steps": [
+    { "op": "crop", "x": 0, "y": 0, "width": 512, "height": 512 },
+    { "op": "resize", "width": 256, "height": 256, "filter": "lanczos3" }
+  ]
+}
 ```
 
-## Documentation map
+Automatic background removal is intentionally not semantic segmentation. It selects bounded edge RGB candidates deterministically and returns evidence for the chosen keys and edge coverage.
 
-Read in this order:
+## PSD export
 
-1. [Product contract](docs/CONTRACT.md) — normative CLI, request, output, and error rules.
-2. [MCP contract](docs/MCP_CONTRACT.md) — typed stdio tools, fixed root, paths, results, and limits.
-3. [Architecture](docs/ARCHITECTURE.md) — module ownership and data flow.
-4. [Function matrix](docs/FUNCTION_MATRIX.md) — capability, state, effect, failure, and evidence mapping.
-5. [Motion contract](docs/MOTION_CONTRACT.md) — motion request and compatibility boundary.
-6. [Vector documentation](docs/vectorize/README.md) — current vector authority, policy, report, and quality documents.
-7. [Documentation index](docs/README.md) — historical plans and provenance records.
-8. [Project page](docs/index.html) — local user-facing overview.
+The PSD command exports one flattened RGB document with four raw planar channels, soft alpha, and closed even-odd path resources derived from a caller-selected alpha threshold.
+
+```json
+{
+  "schemaVersion": 1,
+  "operation": "export_psd",
+  "input": "source.png",
+  "output": "source.psd",
+  "path": {
+    "alphaThreshold": 128,
+    "maxKnots": 4096
+  }
+}
+```
+
+This is a deliberately bounded export contract, not a general Photoshop document editor. See [Contract](docs/CONTRACT.md).
+
+## Sprite workflow
+
+`normalize` converts raw state images or strips into deterministic cell-aligned frame PNGs plus a `sprite-request.json`. `bundle` then packs those frames using deterministic MaxRects placement and emits:
+
+- one or more PNG sheets
+- Aseprite-compatible JSON per sheet
+- `manifest.json`
+- normalized frame PNGs
+
+Input snapshots and generated-set authority are revalidated before atomic publication.
+
+## Vector workflow
+
+`vector` is the sole SVG publication command. Candidate generation does not imply success. Publication requires the embedded route/policy authority and quality gates to approve the exact candidate bytes.
+
+`vector-analyze` emits evidence only and cannot publish SVG or diagnostics.
+
+See [Vector documentation](docs/vectorize/README.md) for route, calibration, quality, and report contracts.
+
+## Motion workflow
+
+`motion-scaffold` converts a raster-free SVG into a generated workspace with stable path identities, layer metadata, a starter request, and a local inspector.
+
+`motion-build` accepts an explicit motion request and emits deterministic animated SVG/JSON/HTML artifacts plus an exploded dotLottie v2 layout. It does not create a packed `.lottie` archive.
+
+## Documentation
+
+1. [Architecture](docs/ARCHITECTURE.md)
+2. [Contract](docs/CONTRACT.md)
+3. [Function matrix](docs/FUNCTION_MATRIX.md)
+4. [MCP contract](docs/MCP_CONTRACT.md)
+5. [Motion contract](docs/MOTION_CONTRACT.md)
+6. [Normalize review contract](docs/NORMALIZE_REVIEW_CONTRACT.md)
+7. [Vector documentation](docs/vectorize/README.md)
+8. [Documentation index](docs/README.md)
 9. [Third-party notices](THIRD_PARTY_NOTICES.md) — direct dependency versions and source-publication limits.
 
 ## Verification
@@ -204,3 +168,7 @@ or if a public command is missing from [the capability matrix](docs/FUNCTION_MAT
 
 The complete runtime gate is verified on macOS arm64. Windows and every non-Unix target fail at
 crate compilation; no non-Unix runtime behavior is supported. See [Residual boundaries](docs/ARCHITECTURE.md#residual-boundaries).
+
+## GitHub 배포 분류
+
+PerfectPixel의 주 제품은 사람이 직접 실행하는 이미지 도구 CLI와 typed local stdio MCP adapter이므로 canonical 조직은 [`AxiomOrient`](https://github.com/AxiomOrient)다. 내부 crate는 실행 제품을 지원하며 별도 SDK가 주 제품은 아니다.
