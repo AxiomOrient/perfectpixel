@@ -1,6 +1,6 @@
 # Third-party notices
 
-PerfectPixel keeps the direct Rust dependency surface intentionally bounded. The canonical dependency declaration is [`Cargo.toml`](Cargo.toml); [`Cargo.lock`](Cargo.lock) is the resolved graph used by `--locked` local verification.
+PerfectPixel keeps the direct Rust dependency surface intentionally bounded. The canonical declaration is [`Cargo.toml`](Cargo.toml); [`Cargo.lock`](Cargo.lock) records the graph used by `--locked` local verification.
 
 ## Direct Rust dependencies
 
@@ -9,21 +9,27 @@ PerfectPixel keeps the direct Rust dependency surface intentionally bounded. The
 | `binpack2d` | `=1.0.1` | deterministic sprite atlas packing |
 | `fast_image_resize` | `=6.1.0` | bounded raster resampling |
 | `image` | `0.25` | PNG/JPEG/WebP decode and encode boundary |
-| `libc` | `0.2` | Unix process/runtime primitives |
-| `resvg` | `0.47` | SVG parse/render verification |
-| `rmcp` | `=3.1.4` | typed local stdio MCP transport |
-| `roxmltree` | `=0.21.1` | bounded SVG/XML parsing support |
+| `libc` | `0.2` | Unix process-group termination for external Effect cancellation/timeout |
+| `resvg` | `0.47`, default features disabled | SVG render-back verification |
+| `rmcp` | `=3.1.4`, default features disabled | typed local stdio MCP transport |
+| `roxmltree` | `=0.21.1` | bounded XML/SVG parsing support |
 | `schemars` | `1` | MCP/request schema generation |
 | `serde` | `1` | typed serialization |
 | `serde_json` | `1` | strict JSON contracts and receipts |
 | `svgtypes` | `=0.16.1` | SVG path parsing |
 | `thiserror` | `1` | typed error definitions |
-| `tokio` | `1` | MCP/runtime async boundary |
+| `tokio` | `1`, `macros`/`rt-multi-thread`/`sync` | MCP async transport/admission boundary |
 
-`moxcms` and `fast-ssim2` are not PerfectPixel direct dependencies. Embedded ICC provenance is retained and fails closed at the transform boundary in this minimal build. Perceptual verification uses the in-repository CIEDE2000 implementation together with exact, alpha, geometry, and region gates.
+`moxcms` may appear transitively through the selected `image` crate; PerfectPixel does not call it or treat it as a color-semantic authority. `fast-ssim2` is not a dependency in this release. Embedded ICC provenance is retained and a required ICC conversion fails explicitly rather than silently assuming sRGB. Perceptual color verification uses the in-repository CIEDE2000 implementation together with exact, alpha, geometry, and region gates.
 
-Cargo.lock may contain transitive packages required by the crates above. In particular, the selected `image` crate currently resolves `moxcms` transitively; PerfectPixel does not call it or treat it as a color-semantic authority. A transitive package does not own PerfectPixel semantics or success policy.
+Cargo.lock may contain other transitive/build packages required by the direct crates above. A transitive package does not own PerfectPixel semantics or success policy.
+
+## External runtime tools
+
+KTX2 compilation uses a caller-supplied `ktx` executable pinned by SHA-256 in each request. It is treated as an external Effect candidate producer, not bundled product authority.
+
+Apple Vision integration uses the helper source under `tools/apple-vision-helper/`. The locally built helper executable is pinned by SHA-256 in the request; Vision inference does not decide product success.
 
 ## Source-only publication limits
 
-This repository publishes source, manifests, lockfile, tests, documentation, and the Apple Vision helper source. It does not claim build/runtime evidence unless that evidence was produced by the verifying host.
+This repository publishes source, manifests, lockfile, tests, documentation, and Apple Vision helper source. It does not claim environment-specific build/runtime evidence unless that evidence was actually produced by the verifying host.
