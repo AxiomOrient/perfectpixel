@@ -36,6 +36,135 @@ pub struct OperationSpec {
     pub capabilities: &'static [&'static str],
 }
 
+const CAP_NONE: &[&str] = &[];
+const CAP_READ: &[&str] = &["filesystem.read"];
+const CAP_PUBLISH: &[&str] = &["filesystem.read", "filesystem.publish"];
+
+const SCHEMA_SPEC: OperationSpec = spec(
+    "system.schema",
+    "Return the product schema",
+    SideEffectClass::None,
+    OperationRisk::None,
+    None,
+    CAP_NONE,
+);
+const INSPECT_SPEC: OperationSpec = spec(
+    "image.inspect",
+    "Inspect one raster artifact",
+    SideEffectClass::Read,
+    OperationRisk::LocalRead,
+    None,
+    CAP_READ,
+);
+const CONVERT_SPEC: OperationSpec = spec(
+    "image.convert",
+    "Convert or resize one raster artifact",
+    SideEffectClass::Publish,
+    OperationRisk::LocalMutation,
+    None,
+    CAP_PUBLISH,
+);
+const UPSCALE_SPEC: OperationSpec = spec(
+    "image.upscale",
+    "Integer-upscale one raster artifact",
+    SideEffectClass::Publish,
+    OperationRisk::LocalMutation,
+    None,
+    CAP_PUBLISH,
+);
+const EDIT_SPEC: OperationSpec = spec(
+    "image.edit",
+    "Apply deterministic raster edits",
+    SideEffectClass::Publish,
+    OperationRisk::LocalMutation,
+    None,
+    CAP_PUBLISH,
+);
+const EXPORT_PSD_SPEC: OperationSpec = spec(
+    "document.export_psd",
+    "Export the deterministic PSD contract",
+    SideEffectClass::Publish,
+    OperationRisk::LocalMutation,
+    None,
+    CAP_PUBLISH,
+);
+const CHROMA_PLAN_SPEC: OperationSpec = spec(
+    "image.chroma_plan",
+    "Plan a controlled chroma background",
+    SideEffectClass::Read,
+    OperationRisk::LocalRead,
+    None,
+    CAP_READ,
+);
+const NORMALIZE_SPRITE_SPEC: OperationSpec = spec(
+    "sprite.normalize",
+    "Normalize sprite frames",
+    SideEffectClass::Publish,
+    OperationRisk::LocalMutation,
+    None,
+    CAP_PUBLISH,
+);
+const COMPILE_SPRITE_SPEC: OperationSpec = spec(
+    "sprite.compile",
+    "Compile a sprite atlas bundle",
+    SideEffectClass::Publish,
+    OperationRisk::LocalMutation,
+    None,
+    CAP_PUBLISH,
+);
+const COMPILE_VECTOR_SPEC: OperationSpec = spec(
+    "vector.compile",
+    "Compile a quality-gated SVG",
+    SideEffectClass::Publish,
+    OperationRisk::LocalMutation,
+    None,
+    CAP_PUBLISH,
+);
+const ANALYZE_VECTOR_SPEC: OperationSpec = spec(
+    "vector.analyze",
+    "Analyze vectorization without publishing SVG",
+    SideEffectClass::Read,
+    OperationRisk::LocalRead,
+    None,
+    CAP_READ,
+);
+const SCAFFOLD_MOTION_SPEC: OperationSpec = spec(
+    "motion.scaffold",
+    "Scaffold motion metadata from SVG",
+    SideEffectClass::Publish,
+    OperationRisk::LocalMutation,
+    None,
+    CAP_PUBLISH,
+);
+const COMPILE_MOTION_SPEC: OperationSpec = spec(
+    "motion.compile",
+    "Compile deterministic motion artifacts",
+    SideEffectClass::Publish,
+    OperationRisk::LocalMutation,
+    None,
+    CAP_PUBLISH,
+);
+
+const OPERATION_SPECS: &[OperationSpec] = &[
+    SCHEMA_SPEC,
+    INSPECT_SPEC,
+    CONVERT_SPEC,
+    UPSCALE_SPEC,
+    EDIT_SPEC,
+    EXPORT_PSD_SPEC,
+    CHROMA_PLAN_SPEC,
+    NORMALIZE_SPRITE_SPEC,
+    COMPILE_SPRITE_SPEC,
+    COMPILE_VECTOR_SPEC,
+    ANALYZE_VECTOR_SPEC,
+    SCAFFOLD_MOTION_SPEC,
+    COMPILE_MOTION_SPEC,
+];
+
+pub fn operation_specs() -> &'static [OperationSpec] {
+    OPERATION_SPECS
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JpegQuality(u8);
 
@@ -76,7 +205,9 @@ pub struct OperationInputError {
 
 impl OperationInputError {
     pub fn new(message: impl Into<String>) -> Self {
-        Self { message: message.into() }
+        Self {
+            message: message.into(),
+        }
     }
 
     pub fn message(&self) -> &str {
@@ -128,18 +259,18 @@ pub fn parse_vector_detail(value: &str) -> Result<Option<VectorDetail>, Operatio
     if value == "auto" {
         return Ok(None);
     }
-    let value = value
-        .parse::<u8>()
-        .map_err(|_| OperationInputError::new("detail must be auto or an integer from 1 through 5"))?;
+    let value = value.parse::<u8>().map_err(|_| {
+        OperationInputError::new("detail must be auto or an integer from 1 through 5")
+    })?;
     VectorDetail::new(value)
         .map(Some)
         .map_err(|error| OperationInputError::new(error.to_string()))
 }
 
 pub fn parse_unit_score(value: &str) -> Result<UnitScore, OperationInputError> {
-    let parsed = value
-        .parse::<f64>()
-        .map_err(|_| OperationInputError::new("quality threshold must be a finite number from 0 through 1"))?;
+    let parsed = value.parse::<f64>().map_err(|_| {
+        OperationInputError::new("quality threshold must be a finite number from 0 through 1")
+    })?;
     UnitScore::new(parsed).map_err(|error| OperationInputError::new(error.to_string()))
 }
 
@@ -148,7 +279,9 @@ pub fn parse_unit_score(value: &str) -> Result<UnitScore, OperationInputError> {
 /// explicit choice when that presence itself changes validity (for example convert --filter).
 pub enum Operation {
     Schema,
-    Inspect { input: PathBuf },
+    Inspect {
+        input: PathBuf,
+    },
     Convert {
         input: PathBuf,
         output: PathBuf,
@@ -166,11 +299,23 @@ pub enum Operation {
         jpeg_quality: Option<JpegQuality>,
         background: Option<[u8; 3]>,
     },
-    Edit { request: PathBuf },
-    ExportPsd { request: PathBuf },
-    ChromaPlan { request: PathBuf },
-    NormalizeSprite { request: PathBuf, output_dir: PathBuf },
-    CompileSprite { request: PathBuf, output_dir: PathBuf },
+    Edit {
+        request: PathBuf,
+    },
+    ExportPsd {
+        request: PathBuf,
+    },
+    ChromaPlan {
+        request: PathBuf,
+    },
+    NormalizeSprite {
+        request: PathBuf,
+        output_dir: PathBuf,
+    },
+    CompileSprite {
+        request: PathBuf,
+        output_dir: PathBuf,
+    },
     CompileVector {
         input: PathBuf,
         output: PathBuf,
@@ -191,26 +336,32 @@ pub enum Operation {
         policy: Option<PathBuf>,
         report: Option<PathBuf>,
     },
-    ScaffoldMotion { input: PathBuf, output_dir: PathBuf },
-    CompileMotion { request: PathBuf, output_dir: PathBuf },
+    ScaffoldMotion {
+        input: PathBuf,
+        output_dir: PathBuf,
+    },
+    CompileMotion {
+        request: PathBuf,
+        output_dir: PathBuf,
+    },
 }
 
 impl Operation {
     pub const fn spec(&self) -> OperationSpec {
         match self {
-            Self::Schema => spec("system.schema", "Return the product schema", SideEffectClass::None, OperationRisk::None, None, &[]),
-            Self::Inspect { .. } => spec("image.inspect", "Inspect one raster artifact", SideEffectClass::Read, OperationRisk::LocalRead, None, &["filesystem.read"]),
-            Self::Convert { .. } => spec("image.convert", "Convert or resize one raster artifact", SideEffectClass::Publish, OperationRisk::LocalMutation, None, &["filesystem.read", "filesystem.publish"]),
-            Self::Upscale { .. } => spec("image.upscale", "Integer-upscale one raster artifact", SideEffectClass::Publish, OperationRisk::LocalMutation, None, &["filesystem.read", "filesystem.publish"]),
-            Self::Edit { .. } => spec("image.edit", "Apply deterministic raster edits", SideEffectClass::Publish, OperationRisk::LocalMutation, None, &["filesystem.read", "filesystem.publish"]),
-            Self::ExportPsd { .. } => spec("document.export_psd", "Export the deterministic PSD contract", SideEffectClass::Publish, OperationRisk::LocalMutation, None, &["filesystem.read", "filesystem.publish"]),
-            Self::ChromaPlan { .. } => spec("image.chroma_plan", "Plan a controlled chroma background", SideEffectClass::Read, OperationRisk::LocalRead, None, &["filesystem.read"]),
-            Self::NormalizeSprite { .. } => spec("sprite.normalize", "Normalize sprite frames", SideEffectClass::Publish, OperationRisk::LocalMutation, None, &["filesystem.read", "filesystem.publish"]),
-            Self::CompileSprite { .. } => spec("sprite.compile", "Compile a sprite atlas bundle", SideEffectClass::Publish, OperationRisk::LocalMutation, None, &["filesystem.read", "filesystem.publish"]),
-            Self::CompileVector { .. } => spec("vector.compile", "Compile a quality-gated SVG", SideEffectClass::Publish, OperationRisk::LocalMutation, None, &["filesystem.read", "filesystem.publish"]),
-            Self::AnalyzeVector { .. } => spec("vector.analyze", "Analyze vectorization without publishing SVG", SideEffectClass::Read, OperationRisk::LocalRead, None, &["filesystem.read"]),
-            Self::ScaffoldMotion { .. } => spec("motion.scaffold", "Scaffold motion metadata from SVG", SideEffectClass::Publish, OperationRisk::LocalMutation, None, &["filesystem.read", "filesystem.publish"]),
-            Self::CompileMotion { .. } => spec("motion.compile", "Compile deterministic motion artifacts", SideEffectClass::Publish, OperationRisk::LocalMutation, None, &["filesystem.read", "filesystem.publish"]),
+            Self::Schema => SCHEMA_SPEC,
+            Self::Inspect { .. } => INSPECT_SPEC,
+            Self::Convert { .. } => CONVERT_SPEC,
+            Self::Upscale { .. } => UPSCALE_SPEC,
+            Self::Edit { .. } => EDIT_SPEC,
+            Self::ExportPsd { .. } => EXPORT_PSD_SPEC,
+            Self::ChromaPlan { .. } => CHROMA_PLAN_SPEC,
+            Self::NormalizeSprite { .. } => NORMALIZE_SPRITE_SPEC,
+            Self::CompileSprite { .. } => COMPILE_SPRITE_SPEC,
+            Self::CompileVector { .. } => COMPILE_VECTOR_SPEC,
+            Self::AnalyzeVector { .. } => ANALYZE_VECTOR_SPEC,
+            Self::ScaffoldMotion { .. } => SCAFFOLD_MOTION_SPEC,
+            Self::CompileMotion { .. } => COMPILE_MOTION_SPEC,
         }
     }
 }
@@ -223,7 +374,14 @@ const fn spec(
     timeout: Option<Duration>,
     capabilities: &'static [&'static str],
 ) -> OperationSpec {
-    OperationSpec { name, summary, side_effect, risk, timeout, capabilities }
+    OperationSpec {
+        name,
+        summary,
+        side_effect,
+        risk,
+        timeout,
+        capabilities,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -275,12 +433,16 @@ mod tests {
 
     #[test]
     fn operation_metadata_has_one_owner() {
-        let operation = Operation::Inspect { input: "a.png".into() };
+        let operation = Operation::Inspect {
+            input: "a.png".into(),
+        };
         let spec = operation.spec();
         assert_eq!(spec.name, "image.inspect");
         assert_eq!(spec.side_effect, SideEffectClass::Read);
         assert_eq!(spec.risk, OperationRisk::LocalRead);
         assert_eq!(spec.capabilities, &["filesystem.read"]);
+        assert_eq!(operation_specs().len(), 13);
+        assert_eq!(operation_specs()[1], spec);
     }
 
     #[test]
