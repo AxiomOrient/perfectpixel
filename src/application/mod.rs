@@ -15,9 +15,6 @@ use crate::Operation;
 use cli::CliInput;
 use shared::{operation_phase, render_result};
 
-// Compatibility bridge for generation_adapter while path authority lives exclusively in path.rs.
-pub(super) use path::{destination_error, managed_relative_path, reject_same_path};
-
 const HELP: &str = r#"perfectpixel 0.3.1
 
 PRODUCT
