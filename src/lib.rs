@@ -12,6 +12,8 @@ mod io;
 #[cfg(unix)]
 mod operation;
 #[cfg(unix)]
+mod runtime;
+#[cfg(unix)]
 mod vector;
 
 #[cfg(unix)]
@@ -49,11 +51,12 @@ pub use core::sha256::{is_sha256_hex, sha256, sha256_hex};
 pub use core::{
     apply_raster_edits, apply_raster_edits_with_evidence, composite_source_over_linear_srgb,
     content_bbox, decontaminate_known_background, delta_e2000, encode_psd, inspect_raster,
-    linear16_to_srgb8, oklab_distance, plan_chroma, plan_remove_background_auto, resize_raster,
-    srgb8_to_lab, srgb8_to_linear16, verify_raster, verify_raster_exact, AlphaHistogram, AlphaMode,
-    ArtifactRef, AutoBackgroundPlan, BlendMode, CanvasSpec, ChromaCandidateScore, ChromaPlan,
-    ColorSpec, ConnectedComponent, DeltaEThresholds, Document, EdgePaletteEntry, ExactAssertion,
-    ExactCheck, ExactEvidence, FrameRect, GroupLayer, Lab, Layer, LayerCommon, Mask,
+    is_valid_premultiplied_rgba8, linear16_to_srgb8, oklab_distance, plan_chroma,
+    plan_remove_background_auto, premultiply_rgba8, resize_raster, srgb8_to_lab,
+    srgb8_to_linear16, unpremultiply_rgba8, verify_raster, verify_raster_exact, AlphaHistogram,
+    AlphaMode, ArtifactRef, AutoBackgroundPlan, BlendMode, CanvasSpec, ChromaCandidateScore,
+    ChromaPlan, ColorSpec, ConnectedComponent, DeltaEThresholds, Document, EdgePaletteEntry,
+    ExactAssertion, ExactCheck, ExactEvidence, FrameRect, GroupLayer, Lab, Layer, LayerCommon, Mask,
     PerceptualAssertion, PerceptualCheck, PerceptualEvidence, PixelFormat, PixelLayer, PixelSpec,
     Point, Point2, PpError, PpResult, PsdEncoded, PsdPathOptions, Raster, RasterEdit,
     RasterInspection, Rect2, RegionAssertion, RegionCheck, RegionEvidence, ResampleFilter,
