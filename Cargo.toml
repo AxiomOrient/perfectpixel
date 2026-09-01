@@ -22,7 +22,6 @@ name = "perfectpixel-mcp"
 path = "src/bin/perfectpixel-mcp.rs"
 
 [dependencies]
-base64 = "0.22"
 binpack2d = "=1.0.1"
 fast_image_resize = "=6.1.0"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
