@@ -145,7 +145,7 @@ mod tests {
     #[test]
     fn exact_verification_fails_closed_when_artifact_evidence_is_missing() -> crate::PpResult<()> {
         let raster = Raster::blank(1, 1)?;
-        let pixel_spec = PixelSpec::rgba8_srgb_straight();
+        let pixel_spec = PixelSpec::new(PixelFormat::Rgba8, AlphaMode::Straight, ColorSpec::Unknown);
         let spec = VerificationSpec {
             exact: vec![ExactAssertion::ArtifactSha256 {
                 expected: Sha256Digest::from_bytes(b"expected"),
