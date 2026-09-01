@@ -23,7 +23,7 @@ deterministic domain transition
                                 checked atomic publish
 ```
 
-The important invariant is one authoritative owner per responsibility. CLI and MCP are presentation adapters; they do not own validation, success policy, or publication semantics independently.
+One responsibility has one authoritative owner. CLI and MCP are presentation/admission adapters; they do not independently own product validation, success policy, timeout policy, or publication semantics.
 
 ## CLI
 
@@ -46,20 +46,22 @@ perfectpixel motion-scaffold <input.svg> --out-dir <dir>
 perfectpixel motion-build --request <motion-request.json> --out-dir <dir>
 ```
 
-`perfectpixel schema` is the machine-readable capability surface. `--help` is the human syntax surface.
+`perfectpixel schema` is the machine-readable capability surface. `--help` is presentation only.
 
 ## Core boundaries
 
+- **Operation authority** — typed `Operation` plus `OperationRegistry`; transports do not reconstruct argv.
 - **Artifact identity** — content SHA-256, not pathname.
-- **Pixel semantics** — RGBA8 plus explicit alpha/color provenance; unknown color remains unknown.
-- **ICC** — embedded profile bytes/digest are preserved. This dependency-minimal build does not perform ICC conversion and fails explicitly instead of assuming sRGB.
-- **Verification** — exact dimensions/pixel/alpha/artifact, mask geometry, region assertions, and in-repository CIEDE2000 evidence.
+- **Inspection** — exact source `ArtifactRef`, codec-observed `PixelSpec`, ICC byte evidence, and deterministic raster facts. A bare `Raster` does not invent color provenance.
+- **Pixel semantics** — RGBA8 plus explicit alpha/color provenance; missing color remains `Unknown`.
+- **ICC** — embedded profile bytes/digest are preserved. This release has no ICC conversion engine and fails explicitly instead of assuming sRGB.
+- **Verification** — exact dimensions/pixel/alpha/artifact, mask geometry, region assertions, and CIEDE2000 evidence.
 - **Alpha / geometry / composite** — deterministic core operations shared by documents, masks, sprites, and verification.
-- **Document** — `DocumentIR` owns layered semantics; the PSD adapter serializes those semantics and does not own the merged appearance.
-- **Texture** — pinned KTX executable is an external Effect; candidate bytes must pass KTX2 structure and decode-roundtrip verification before publication.
-- **Vector** — PerfectPixel's verified route/policy and raster roundtrip gates decide acceptance. Optional disconnected backends are not exposed.
-- **Apple Vision** — inference is an external Effect. generation/operation/input identity, helper provenance, deterministic mask cleanup, and verification precede checked publication.
-- **Publication** — destination/input preconditions are captured before expensive work; only checked atomic publication owns the visible mutation.
+- **Document** — `DocumentIR` owns layered semantics; the PSD adapter serializes them and does not own merged appearance.
+- **Texture** — a SHA-pinned KTX executable is an external Effect; candidate bytes must pass structure and decode-roundtrip verification before publication.
+- **Vector** — PerfectPixel's verified route/policy and raster roundtrip gates decide acceptance. Disconnected optional backends are not exposed.
+- **Apple Vision** — inference is an external Effect. Work identity, helper provenance, deterministic mask cleanup, and verification precede checked publication.
+- **Publication** — destination/input preconditions are captured before expensive work; only checked atomic publication owns visible mutation.
 
 ## MCP
 
@@ -67,24 +69,26 @@ perfectpixel motion-build --request <motion-request.json> --out-dir <dir>
 perfectpixel-mcp --root /absolute/non-symlink/workspace
 ```
 
-The MCP adapter is local stdio with a fixed root. Its typed DTOs convert directly to the same `Operation` authority used by the CLI. It is not a generic command runner.
+The MCP adapter is local stdio with a fixed root. Protocol-local typed `*Params` resolve directly into the same `Operation` authority used by the CLI. It is not a generic command runner.
 
 ## Failure semantics
 
-Failure, cancellation, timeout, dependency failure, verification failure, precondition conflict, and stale Effect results are distinct. External process completion never means product success by itself. A failed or stale candidate cannot acquire artifact authority.
+Failure, cancellation, timeout, dependency failure, verification failure, precondition conflict, and stale Effect results remain distinct. External process completion never means product success by itself. A failed, cancelled, stale, or unverified candidate cannot acquire artifact authority.
 
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
-- [Contract](docs/CONTRACT.md)
+- [Product contract](docs/CONTRACT.md)
 - [Function matrix](docs/FUNCTION_MATRIX.md)
 - [MCP contract](docs/MCP_CONTRACT.md)
 - [Motion contract](docs/MOTION_CONTRACT.md)
 - [Normalize review contract](docs/NORMALIZE_REVIEW_CONTRACT.md)
 - [Vector documentation](docs/vectorize/README.md)
+- [Roadmap completion](docs/ROADMAP_COMPLETION_2026-09-01.md)
+- [Research decisions](docs/RESEARCH_DECISIONS_2026-09-01.md)
+- [Final handoff](docs/FINAL_HANDOFF_2026-09-01.md)
 - [Documentation index](docs/README.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
-- [Roadmap completion](docs/ROADMAP_COMPLETION_2026-09-01.md)
 
 ## Verification
 
@@ -96,6 +100,6 @@ cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 cargo test --locked --workspace --all-targets --all-features
 ```
 
-Apple Vision, KTX executable integration, and native Photoshop interoperability require the corresponding local tools/frameworks and are not inferred from source inspection.
+Apple Vision, KTX executable integration, and native layered-PSD interoperability require the corresponding local tools/frameworks. They are not inferred from source inspection.
 
 PerfectPixel intentionally supports Unix targets only; non-Unix targets fail at crate compilation.
