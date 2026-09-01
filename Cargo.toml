@@ -24,6 +24,7 @@ path = "src/bin/perfectpixel-mcp.rs"
 [dependencies]
 binpack2d = "=1.0.1"
 fast_image_resize = "=6.1.0"
+fast-ssim2 = { version = "=0.9.0", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 libc = "=0.2.189"
 moxcms = "=0.8.1"
